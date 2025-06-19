@@ -1,0 +1,15 @@
+[project]
+name = "hdl_runner"
+authors = [
+    { name = "Alan Vekselman", email = "alanvek98@gmail.com" },
+]
+version = "0.0.1"
+requires-python = ">=3.8"
+dependencies = [
+    "amaranth",
+    "amaranth_yosys",
+    "cocotb==1.9.2",
+]
+
+[build-system]
+requires = ["setuptools"]
