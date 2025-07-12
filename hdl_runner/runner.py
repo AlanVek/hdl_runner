@@ -7,10 +7,12 @@ from amaranth.back import verilog
 import find_libpython
 import sys
 import cocotb
+from amaranth import Record, Signal
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
     from cocotb.runner import get_runner
+    from amaranth.hdl.ast import SignalDict, SignalKey
 
 def open_ports(ports) -> list:
     """
@@ -23,11 +25,12 @@ def open_ports(ports) -> list:
     Returns:
         List of Signal objects.
     """
-    from amaranth import Record, Signal
-    from amaranth.hdl.ast import SignalDict, SignalKey
+
+    if hasattr(ports, 'as_value') and callable(ports.as_value):
+        ports = ports.as_value()
 
     if isinstance(ports, Signal):
-        return [ports.as_value()]
+        return [ports]
 
     res = []
 
@@ -326,6 +329,9 @@ def run(
     simulators = {sim.name: sim for sim in _simulators}
 
     caller_file = os.path.abspath(inspect.stack()[1].filename)
+
+    if verilog_sources is None:
+        verilog_sources = []
 
     if ports is None:
         ports = []
