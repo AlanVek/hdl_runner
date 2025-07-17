@@ -22,8 +22,7 @@ jobs:
           GHDL_FULL_VERSION=llvm-${GHDL_VERSION}-ubuntu24.04-x86_64
           wget https://github.com/ghdl/ghdl/releases/download/v${GHDL_VERSION}/ghdl-${GHDL_FULL_VERSION}.tar.gz
           tar xzf ghdl-${GHDL_FULL_VERSION}.tar.gz
-          mv ghdl-${GHDL_FULL_VERSION}/bin/* /usr/bin/
-          rm -rf ghdl-${GHDL_FULL_VERSION}*
+          echo "PATH=${PATH}:$(pwd)/ghdl-${GHDL_FULL_VERSION}/bin" >> $GITHUB_ENV
 
       - name: Set up Python virtual environment
         run: |
