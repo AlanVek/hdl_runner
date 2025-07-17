@@ -17,7 +17,13 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y iverilog verilator ghdl python3-venv
+          sudo apt-get install -y iverilog verilator python3-venv
+          GHDL_VERSION=5.1.1
+          GHDL_FULL_VERSION=llvm-${GHDL_VERSION}-ubuntu24.04-x86_64
+          wget https://github.com/ghdl/ghdl/releases/download/v${GHDL_VERSION}/ghdl-${GHDL_FULL_VERSION}.tar.gz
+          tar xzf ghdl-${GHDL_FULL_VERSION}.tar.gz
+          #mv ghdl-${GHDL_FULL_VERSION}/bin/* /usr/bin/
+          rm -rf ghdl-${GHDL_FULL_VERSION}*
 
       - name: Set up Python virtual environment
         run: |
