@@ -285,6 +285,8 @@ class Ghdl(Simulator):
         if self.has_waves:
             self.plusargs.append(f'--{self.waveform_format}={self.waveform_file}')
 
+        self.build_args.append('--std=08')
+
 def run(
     module = None,
     ports = None,
