@@ -287,6 +287,13 @@ class Ghdl(Simulator):
 
         self.build_args.append('--std=08')
 
+    def _pre_run(self):
+        """
+        Prepare GHDL-specific test arguments
+        """
+        super()._pre_run()
+        self.test_args.append('--std=08')
+
 def run(
     module = None,
     ports = None,
