@@ -281,9 +281,10 @@ class Ghdl(Simulator):
         """
         super()._pre_build()
         self.hdl_toplevel = self.hdl_toplevel.lower()
+        self.wave_name = None
 
         if self.has_waves:
-            self.plusargs.append(f'--{self.waveform_format}={self.waveform_file}')
+            self.plusargs.append(f'--{self.waveform_format}={os.path.abspath(self.waveform_file)}')
 
         self.build_args.append('--std=08')
 
