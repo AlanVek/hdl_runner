@@ -7,7 +7,7 @@ from amaranth.back import verilog
 import find_libpython
 import sys
 import cocotb
-from amaranth import Record, Signal
+from amaranth import Record, Signal, Cat
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
@@ -43,6 +43,8 @@ def open_ports(ports) -> list:
         ports = ports.values()
     elif isinstance(ports, SignalDict):
         ports = ports.keys()
+    elif isinstance(ports, Cat):
+        ports = ports.parts
 
     try:
         for pin in ports:
