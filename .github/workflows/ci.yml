@@ -23,7 +23,7 @@ jobs:
       - name: Install GHDL
         run: |
           GHDL_VERSION=5.1.1
-          GHDL_FULL_VERSION=ghdl-llvm-${GHDL_VERSION}-ubuntu24.04-x86_64.tar.gz
+          GHDL_FULL_VERSION=ghdl-llvm-${GHDL_VERSION}-ubuntu24.04-x86_64
           wget https://github.com/ghdl/ghdl/releases/download/v${GHDL_VERSION}/${GHDL_FULL_VERSION}.tar.gz
           tar xzf ${GHDL_FULL_VERSION}.tar.gz && rm ${GHDL_FULL_VERSION}.tar.gz
           echo "PATH=${PATH}:$(pwd)/${GHDL_FULL_VERSION}/bin" >> $GITHUB_ENV
