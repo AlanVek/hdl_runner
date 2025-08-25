@@ -295,6 +295,30 @@ class Ghdl(Simulator):
         super()._pre_run()
         self.test_args.append('--std=08')
 
+class Nvc(Simulator):
+    """
+    NVC simulator integration.
+    """
+    name = 'nvc'
+
+    def _pre_build(self):
+        """
+        Prepare NVC-specific build arguments and waveform handling.
+        """
+        super()._pre_build()
+        self.hdl_toplevel = self.hdl_toplevel.lower()
+        self.wave_name = None
+
+        if self.has_waves:
+            if self.waveform_format != 'fst':
+                raise RuntimeError(f"NVC doesn't support .{self.waveform_format} waveform, only .fst")
+            self.plusargs.append(f'--wave={os.path.abspath(self.waveform_file)}')
+
+        self.build_args.append('--std=2008')
+
+        # TODO: Allowed memory, may need to be tweaked
+        self.build_args.append('-M 256m')
+
 def run(
     module = None,
     ports = None,
@@ -331,22 +355,28 @@ def run(
         timescale: HDL timescale as a tuple.
     """
     _simulators = [
-        Icarus,
-        Verilator,
-        Ghdl,
+        SimClass for SimClass in globals().values() if isinstance(SimClass, type) and issubclass(SimClass, Simulator)
     ]
 
-    simulators = {sim.name: sim for sim in _simulators}
+    simulators = {sim.name: sim for sim in _simulators if sim.name is not None}
+    if simulator in simulators:
+        Sim = simulators[simulator]
+    else:
+        warnings.warn(f"Using unknown simulator: {simulator}", stacklevel=2)
+        Sim = Simulator
 
     caller_file = os.path.abspath(inspect.stack()[1].filename)
 
     if verilog_sources is None:
         verilog_sources = []
 
+    if vhdl_sources is None:
+        vhdl_sources = []
+
     if ports is None:
         ports = []
 
-    module_name = 'amaranth_output'
+    module_name = 'top'
     if toplevel is None:
         toplevel = module_name
 
@@ -401,12 +431,6 @@ def run(
 
         if waveform_file is None:
             waveform_file = vcd_file
-
-        if simulator in simulators:
-            Sim = simulators[simulator]
-        else:
-            warnings.warn(f"Using unknown simulator: {simulator}", stacklevel=2)
-            Sim = Simulator
 
         sim = Sim(
             hdl_toplevel        = toplevel,
