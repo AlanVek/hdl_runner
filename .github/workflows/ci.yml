@@ -17,12 +17,23 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y iverilog verilator python3-venv libgnat-13 llvm-18-dev nvc
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --fix-broken iverilog verilator python3-venv libgnat-13 \
+                                          llvm-18-dev wget libdw1t64 libllvm18 libreadline8t64 libtcl8.6 binutils
+
+      - name: Install GHDL
+        run: |
           GHDL_VERSION=5.1.1
-          GHDL_FULL_VERSION=llvm-${GHDL_VERSION}-ubuntu24.04-x86_64
-          wget https://github.com/ghdl/ghdl/releases/download/v${GHDL_VERSION}/ghdl-${GHDL_FULL_VERSION}.tar.gz
-          tar xzf ghdl-${GHDL_FULL_VERSION}.tar.gz
-          echo "PATH=${PATH}:$(pwd)/ghdl-${GHDL_FULL_VERSION}/bin" >> $GITHUB_ENV
+          GHDL_FULL_VERSION=ghdl-llvm-${GHDL_VERSION}-ubuntu24.04-x86_64.tar.gz
+          wget https://github.com/ghdl/ghdl/releases/download/v${GHDL_VERSION}/${GHDL_FULL_VERSION}.tar.gz
+          tar xzf ${GHDL_FULL_VERSION}.tar.gz && rm ${GHDL_FULL_VERSION}.tar.gz
+          echo "PATH=${PATH}:$(pwd)/${GHDL_FULL_VERSION}/bin" >> $GITHUB_ENV
+
+      - name: Install NVC
+        run: |
+          NVC_VERSION=1.17.2
+          NVC_FULL_VERSION=nvc_${NVC_VERSION}-1_amd64_ubuntu-24.04.deb
+          wget https://github.com/nickg/nvc/releases/download/r${NVC_VERSION}/${NVC_FULL_VERSION}
+          sudo dpkg -i ${NVC_FULL_VERSION} && rm ${NVC_FULL_VERSION}
 
       - name: Set up Python virtual environment
         run: |
