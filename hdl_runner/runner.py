@@ -314,6 +314,7 @@ class Nvc(Simulator):
                 raise RuntimeError(f"NVC doesn't support .{self.waveform_format} waveform, only .fst")
             self.plusargs.append(f'--wave={os.path.abspath(self.waveform_file)}')
 
+        self.plusargs.append(f'--dump-arrays')
         self.build_args.append('--std=2008')
 
         # TODO: Allowed memory, may need to be tweaked
