@@ -321,7 +321,17 @@ def get_lang_map():
         def convert(self, *args, **kwargs):
             return verilog.convert(*args, **kwargs)
 
-    return {'verilog': VerilogConverter}
+    class VHDLConverter:
+        extensions = ('vhd', 'vhdl')
+        default_extension = 'vhd'
+
+        def convert(self, *args, **kwargs):
+            raise NotImplementedError("Amaranth to VHDL not supported")
+
+    return {
+        'verilog': VerilogConverter,
+        'vhdl': VHDLConverter,
+    }
 
 class _RunnerHelper:
     def __init__(
