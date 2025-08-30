@@ -3,8 +3,7 @@ import tempfile
 import shutil
 import inspect
 import warnings
-from amaranth.back import verilog
-from amaranth.build.plat import Platform
+from celosia import Platform, get_lang_map
 import find_libpython
 import sys
 import cocotb
@@ -312,29 +311,6 @@ class Nvc(Simulator):
         # TODO: Allowed memory, may need to be tweaked
         self.build_args.append('-M 256m')
 
-def get_lang_map():
-    """
-    Returns a mapping of HDL language names to converter classes.
-    """
-    class VerilogConverter:
-        extensions = ('v',)
-        default_extension = 'v'
-
-        def convert(self, *args, **kwargs):
-            return verilog.convert(*args, **kwargs)
-
-    class VHDLConverter:
-        extensions = ('vhd', 'vhdl')
-        default_extension = 'vhd'
-
-        def convert(self, *args, **kwargs):
-            raise NotImplementedError("Amaranth to VHDL not supported")
-
-    return {
-        'verilog': VerilogConverter,
-        'vhdl': VHDLConverter,
-    }
-
 class _RunnerHelper:
     """
     Helper class for managing simulation setup, HDL sources, and conversion.
@@ -449,7 +425,7 @@ class _RunnerHelper:
             self.module,
             name = self.module_name,
             ports = open_ports(self.ports),
-            platform = platform,
+            platform = Platform.from_amaranth_platform(platform),
         )
         with open(filename, 'w') as f:
             f.write(hdl_data)
