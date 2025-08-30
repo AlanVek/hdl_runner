@@ -2,11 +2,11 @@
 
 A Python-based framework for running and testing hardware designs using industry-standard simulators and [cocotb](https://www.cocotb.org/) for testbenches. HDL Runner supports designs written in [Amaranth HDL](https://amaranth-lang.org/) (formerly nMigen), as well as pure Verilog or VHDL sources.
 
-HDL Runner automates the process of converting Amaranth designs to Verilog (if needed), running simulations with various backends (e.g. Verilator, Icarus Verilog, GHDL), and integrating with cocotb for Python-based testbenches.
+HDL Runner automates the process of converting Amaranth designs to Verilog (if needed), running simulations with various backends, and integrating with cocotb for Python-based testbenches.
 
 ## Features
 
-- **Simulator Abstraction:** Supports multiple simulators (currently Verilator, Icarus Verilog, and GHDL).
+- **Simulator Abstraction:** Supports multiple simulators (see [Currently Supported Simulators](#currently-supported-simulators)).
 - **Amaranth Integration (Optional):** Seamlessly converts Amaranth designs to Verilog for simulation, or you can use your own Verilog/VHDL sources directly.
 - **cocotb Integration:** Write testbenches in Python using cocotb.
 - **Waveform Generation:** Supports VCD and FST waveform outputs.
@@ -22,7 +22,7 @@ Install HDL Runner and its dependencies using pip:
 pip install hdl_runner
 ```
 
-All required Python dependencies (including Amaranth HDL and cocotb) are installed automatically. You will need at least one supported simulator (e.g., Verilator, Icarus Verilog, or GHDL) installed and available in your PATH.
+All required Python dependencies (including Amaranth HDL and cocotb) are installed automatically. You will need at least one supported simulator installed and available in your PATH.
 
 If you want to run tests using the `test_` functions, you may want to install `pytest`:
 
@@ -140,6 +140,7 @@ python -m pytest test_adder.py
 - **Verilator** (`simulator='verilator'`)
 - **Icarus Verilog** (`simulator='icarus'`)
 - **GHDL** (`simulator='ghdl'`)
+- **NVC** (`simulator='nvc'`)
 
 More simulators may be supported in the future.
 
