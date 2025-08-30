@@ -78,8 +78,7 @@ class Simulator:
         Args:
             hdl_toplevel: Name of the top-level module/entity.
             caller_file: Path to the Python file invoking the runner.
-            verilog_sources: List of Verilog source files.
-            vhdl_sources: List of VHDL source files.
+            hdl_sources: Dictionary of HDL type and source files.
             parameters: Dictionary of parameters to pass to the design.
             extra_env: Extra environment variables for the simulator.
             waveform_file: Output file for simulation waveforms.
@@ -314,6 +313,9 @@ class Nvc(Simulator):
         self.build_args.append('-M 256m')
 
 def get_lang_map():
+    """
+    Returns a mapping of HDL language names to converter classes.
+    """
     class VerilogConverter:
         extensions = ('v',)
         default_extension = 'v'
@@ -334,6 +336,9 @@ def get_lang_map():
     }
 
 class _RunnerHelper:
+    """
+    Helper class for managing simulation setup, HDL sources, and conversion.
+    """
     def __init__(
         self,
         module = None,
@@ -408,11 +413,23 @@ class _RunnerHelper:
                 raise RuntimeError(f"Failed to find language for simulator {self.simulator} that supports file {name}")
 
     def set_working_directory(self, directory: str):
+        """
+        Sets the working directory for build artifacts.
+
+        Args:
+            directory (str): Directory path.
+        """
         self.directory = directory
 
     def convert_amaranth(self, platform: Platform):
+        """
+        Converts the Amaranth module to HDL and adds it to sources.
+
+        Args:
+            platform (Platform): Optional Amaranth platform for conversion.
+        """
         if self.directory is None:
-            self.directory = os.getcwd()
+            self.set_working_directory(os.getcwd())
 
         self._process_extra_sources(platform)
 
@@ -440,6 +457,12 @@ class _RunnerHelper:
         self.hdl_sources[lang].append(filename)
 
     def set_hdl_sources(self, **kwargs):
+        """
+        Sets HDL sources for simulation.
+
+        Args:
+            kwargs: Keyword arguments mapping language to list of source files.
+        """
         self.hdl_sources.clear()
 
         for key, new_sources in kwargs.items():
