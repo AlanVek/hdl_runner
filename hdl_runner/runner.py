@@ -213,7 +213,6 @@ class Icarus(Simulator):
     """
     Icarus Verilog simulator integration.
     """
-    name = 'icarus'
     langs = ('verilog',)
 
     def _pre_build(self):
@@ -244,7 +243,6 @@ class Verilator(Simulator):
     """
     Verilator simulator integration.
     """
-    name = 'verilator'
     langs = ('verilog',)
 
     def _pre_build(self):
@@ -267,7 +265,6 @@ class Ghdl(Simulator):
     """
     GHDL simulator integration.
     """
-    name = 'ghdl'
     langs = ('vhdl',)
 
     def _pre_build(self):
@@ -294,7 +291,6 @@ class Nvc(Simulator):
     """
     NVC simulator integration.
     """
-    name = 'nvc'
     langs = ('vhdl',)
 
     def _pre_build(self):
@@ -346,7 +342,7 @@ class _RunnerHelper:
         _simulators = [
             SimClass for SimClass in globals().values() if isinstance(SimClass, type) and issubclass(SimClass, Simulator)
         ]
-        simulators = {sim.name: sim for sim in _simulators if sim.name is not None}
+        simulators = {sim.__name__.lower(): sim for sim in _simulators if sim is not Simulator}
 
         if self.simulator in simulators:
             self.Sim = simulators[self.simulator]
@@ -463,7 +459,7 @@ def run(
         verilog_sources: List of Verilog source files.
         vhdl_sources: List of VHDL source files.
         toplevel: Name of the top-level module/entity in HDL sources (required if not using Amaranth).
-        simulator: Simulator backend to use ('icarus', 'verilator', 'ghdl').
+        simulator: Simulator backend to use ('icarus', 'verilator', 'ghdl', 'nvc').
         random_seed: Seed for simulation randomness.
         extra_env: Extra environment variables for the simulator.
         build_dir: Directory for build artifacts (default: temporary).
