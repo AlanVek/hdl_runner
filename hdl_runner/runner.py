@@ -4,6 +4,7 @@ import shutil
 import inspect
 import warnings
 from amaranth.back import verilog
+from amaranth.build.plat import Platform
 import find_libpython
 import sys
 import cocotb
@@ -59,13 +60,13 @@ class Simulator:
     """
     name = None
     valid_waveforms = ['vcd', 'fst']
+    langs = ()
 
     def __init__(
         self,
         hdl_toplevel: str,
         caller_file: str,
-        verilog_sources: list = None,
-        vhdl_sources: list = None,
+        hdl_sources: dict[str, list[str]],
         parameters: dict = None,
         extra_env: dict = None,
         waveform_file: str = None,
@@ -86,12 +87,6 @@ class Simulator:
             directory: Build directory.
             timescale: HDL timescale as a tuple (e.g., ('1ns', '1ps')).
         """
-        if verilog_sources is None:
-            verilog_sources = []
-
-        if vhdl_sources is None:
-            vhdl_sources = []
-
         if extra_env is None:
             extra_env = {}
 
@@ -100,8 +95,7 @@ class Simulator:
 
         self.hdl_toplevel       = hdl_toplevel
         self.caller_file        = caller_file
-        self.verilog_sources    = verilog_sources
-        self.vhdl_sources       = vhdl_sources
+        self.hdl_sources        = hdl_sources
         self.parameters         = parameters
         self.extra_env          = extra_env
         self.waveform_file      = waveform_file
@@ -167,8 +161,7 @@ class Simulator:
         """
         self._pre_build()
         self.runner.build(
-            verilog_sources = self.verilog_sources,
-            vhdl_sources    = self.vhdl_sources,
+            **self.hdl_sources,
             hdl_toplevel    = self.hdl_toplevel,
             waves           = self.has_waves,
             timescale       = self.timescale,
@@ -221,7 +214,7 @@ class Icarus(Simulator):
     """
     Icarus Verilog simulator integration.
     """
-    name = 'icarus'
+    langs = ('verilog',)
 
     def _pre_build(self):
         """
@@ -251,7 +244,7 @@ class Verilator(Simulator):
     """
     Verilator simulator integration.
     """
-    name = 'verilator'
+    langs = ('verilog',)
 
     def _pre_build(self):
         """
@@ -273,7 +266,7 @@ class Ghdl(Simulator):
     """
     GHDL simulator integration.
     """
-    name = 'ghdl'
+    langs = ('vhdl',)
 
     def _pre_build(self):
         """
@@ -299,7 +292,7 @@ class Nvc(Simulator):
     """
     NVC simulator integration.
     """
-    name = 'nvc'
+    langs = ('vhdl',)
 
     def _pre_build(self):
         """
@@ -320,6 +313,136 @@ class Nvc(Simulator):
         # TODO: Allowed memory, may need to be tweaked
         self.build_args.append('-M 256m')
 
+def get_lang_map():
+    class VerilogConverter:
+        extensions = ('v',)
+        default_extension = 'v'
+
+        def convert(self, *args, **kwargs):
+            return verilog.convert(*args, **kwargs)
+
+    return {'verilog': VerilogConverter}
+
+class _RunnerHelper:
+    def __init__(
+        self,
+        module = None,
+        lang: str = None,
+        simulator: str = None,
+        module_name: str = None,
+        ports: list = None,
+    ):
+        self.module = module
+        self.lang = lang
+        self.simulator = simulator
+        self.module_name = module_name
+        self.ports = ports
+
+        self.lang_map = get_lang_map()
+        self.hdl_sources: dict[str, list[str]] = {}
+        self.extra_sources: dict[str] = {}
+        self.Sim: type[Simulator] = None
+        self.langs = set()
+        self.directory: str = None
+
+        self._get_simulator_and_langs()
+
+    def _get_simulator_and_langs(self):
+        self.langs.clear()
+
+        _simulators = [
+            SimClass for SimClass in globals().values() if isinstance(SimClass, type) and issubclass(SimClass, Simulator)
+        ]
+        simulators = {sim.__name__.lower(): sim for sim in _simulators if sim is not Simulator}
+
+        if self.simulator in simulators:
+            self.Sim = simulators[self.simulator]
+            if self.module is not None and self.lang is not None and self.lang.lower() not in self.Sim.langs:
+                raise ValueError(f"Simulator {self.simulator} only supports {' or '.join(self.Sim.langs) if self.Sim.langs else 'no lang'}, can't use requested lang {self.lang}")
+            self.langs.update(map(str.lower, self.Sim.langs))
+
+        else:
+            if self.module is not None and self.lang is None:
+                raise RuntimeError(f"'lang' must be provided when using unknown simulator ({self.simulator})")
+
+            warnings.warn(f"Using unknown simulator: {self.simulator}", stacklevel=2)
+            self.langs.update((self.lang.lower(), *self.lang_map.keys()))
+            self.Sim = Simulator
+
+    def _process_extra_sources(self, platform: Platform):
+        if platform is None:
+            return
+
+        self.extra_sources.clear()
+        for name, content in platform.extra_files.items():
+            if isinstance(content, str):
+                content = content.encode('utf-8')
+            elif not isinstance(content, bytes):
+                raise ValueError(f"Invalid extra file type: {type(content)}")
+            self.extra_sources[name] = content
+
+            new_path = os.path.join(self.directory, name)
+            if os.path.isfile(new_path):
+                raise RuntimeError(f"Name collision for file: {name}")
+
+            with open(new_path, 'wb') as f:
+                f.write(content)
+
+            extension = os.path.splitext(name)[-1]
+            for key, hdl in self.lang_map.items():
+                if extension[1:] not in hdl.extensions or key not in self.langs:
+                    continue
+                self.hdl_sources[key].append(new_path)
+                break
+            else:
+                raise RuntimeError(f"Failed to find language for simulator {self.simulator} that supports file {name}")
+
+    def set_working_directory(self, directory: str):
+        self.directory = directory
+
+    def convert_amaranth(self, platform: Platform):
+        if self.directory is None:
+            self.directory = os.getcwd()
+
+        self._process_extra_sources(platform)
+
+        if self.module is None:
+            return
+
+        for new_lang in self.langs:
+            if new_lang in self.lang_map:
+                lang = new_lang
+                break
+        else:
+            raise ValueError(f"Failed to select HDL language for Amaranth output from options: {', '.join(self.langs)}")
+
+        converter = self.lang_map[lang]()
+        filename = os.path.join(self.directory, f'amaranth_output.{converter.default_extension}')
+        hdl_data = converter.convert(
+            self.module,
+            name = self.module_name,
+            ports = open_ports(self.ports),
+            platform = platform,
+        )
+        with open(filename, 'w') as f:
+            f.write(hdl_data)
+
+        self.hdl_sources[lang].append(filename)
+
+    def set_hdl_sources(self, **kwargs):
+        self.hdl_sources.clear()
+
+        for key, new_sources in kwargs.items():
+            if new_sources is None:
+                new_sources = []
+            elif key not in self.langs:
+                raise ValueError(f"Simulator {self.simulator} doesn't support {key} sources")
+
+            if not isinstance(new_sources, (list, tuple, set)):
+                raise ValueError(f"Invalid value for {key}_sources: {new_sources}")
+
+            self.hdl_sources[key] = list(new_sources)
+
 def run(
     module = None,
     ports = None,
@@ -335,6 +458,7 @@ def run(
     platform = None,
     vcd_file: str = None, # For backwards compatibility
     timescale: tuple = ('1ns', '1ps'),
+    lang: str = None,
 ):
     """
     Main entry point to build and run a simulation.
@@ -346,7 +470,7 @@ def run(
         verilog_sources: List of Verilog source files.
         vhdl_sources: List of VHDL source files.
         toplevel: Name of the top-level module/entity in HDL sources (required if not using Amaranth).
-        simulator: Simulator backend to use ('icarus', 'verilator', 'ghdl').
+        simulator: Simulator backend to use ('icarus', 'verilator', 'ghdl', 'nvc').
         random_seed: Seed for simulation randomness.
         extra_env: Extra environment variables for the simulator.
         build_dir: Directory for build artifacts (default: temporary).
@@ -354,78 +478,38 @@ def run(
         platform: Optional Amaranth platform for conversion.
         vcd_file: Deprecated, use waveform_file instead.
         timescale: HDL timescale as a tuple.
+        lang: HDL language to be used (mostly just required for unknown simulator)
     """
-    _simulators = [
-        SimClass for SimClass in globals().values() if isinstance(SimClass, type) and issubclass(SimClass, Simulator)
-    ]
 
-    simulators = {sim.name: sim for sim in _simulators if sim.name is not None}
-    if simulator in simulators:
-        Sim = simulators[simulator]
-    else:
-        warnings.warn(f"Using unknown simulator: {simulator}", stacklevel=2)
-        Sim = Simulator
-
-    caller_file = os.path.abspath(inspect.stack()[1].filename)
-
-    if verilog_sources is None:
-        verilog_sources = []
-
-    if vhdl_sources is None:
-        vhdl_sources = []
-
-    if ports is None:
-        ports = []
-
-    module_name = 'top'
     if toplevel is None:
-        toplevel = module_name
-
-        if not module:
+        toplevel = module_name = 'top'
+        if module is None:
             raise ValueError("Top-level name must be provided if no Amaranth module is given")
+    else:
+        module_name = toplevel
 
-    extra_sources = {}
-    if platform is not None and getattr(platform, 'extra_files', {}):
-        for n, content in platform.extra_files.items():
-            if isinstance(content, str):
-                content = content.encode('utf-8')
-            elif not isinstance(content, bytes):
-                raise ValueError(f"Invalid extra file type: {type(content)}")
-            extra_sources[n] = content
+    runner = _RunnerHelper(
+        module = module,
+        lang = lang,
+        simulator = simulator,
+        module_name = module_name,
+        ports = ports or [],
+    )
 
-    if module is None and not (verilog_sources or vhdl_sources or extra_sources):
-        raise ValueError("No HDL input specified")
+    runner.set_hdl_sources(**{
+        key.rsplit('_sources', maxsplit=1)[0]: value for key, value in locals().items() if key.endswith('_sources')
+    })
 
     with tempfile.TemporaryDirectory() as d:
         if build_dir is not None:
             d = build_dir
             os.makedirs(build_dir, exist_ok=True)
 
-        if module is not None:
-            verilog_name = os.path.join(d, f'amaranth_output.v')
-            verilog_data = verilog.convert(
-                elaboratable = module,
-                name = module_name,
-                ports = open_ports(ports),
-                strip_internal_attrs = True,
-                platform = platform,
-                emit_src=False,
-            )
-            with open(verilog_name, 'w') as f:
-                f.write(verilog_data)
-            verilog_sources.append(verilog_name)
+        runner.set_working_directory(str(d))
+        runner.convert_amaranth(platform)
 
-        for name, content in extra_sources.items():
-            new_path = os.path.join(d, name)
-            if os.path.isfile(new_path):
-                raise RuntimeError(f"Name collision for file: {name}")
-            with open(new_path, 'wb') as f:
-                f.write(content)
-
-            if os.path.splitext()[-1] in ['.vhd', '.vhdl']:
-                vhdl_sources.append(new_path)
-            else:
-                verilog_sources.append(new_path)
+        if not any(runner.hdl_sources.values()):
+            raise ValueError("No HDL input specified")
 
         if waveform_file is not None and vcd_file is not None:
             raise ValueError("Both waveform_file and vcd_file can't be used at the same time")
@@ -433,17 +517,16 @@ def run(
         if waveform_file is None:
             waveform_file = vcd_file
 
-        sim = Sim(
+        sim = runner.Sim(
             hdl_toplevel        = toplevel,
-            caller_file         = caller_file,
-            verilog_sources     = verilog_sources,
-            vhdl_sources        = vhdl_sources,
+            caller_file         = os.path.abspath(inspect.stack()[1].filename),
             parameters          = parameters,
             extra_env           = extra_env,
             waveform_file       = waveform_file,
             random_seed         = random_seed,
             directory           = d,
             timescale           = timescale,
+            hdl_sources         = {f'{key}_sources': value for key, value in runner.hdl_sources.items()},
         )
         sim.name = simulator
 
