@@ -473,11 +473,13 @@ def run(
         timescale: HDL timescale as a tuple.
         lang: HDL language to be used (mostly just required for unknown simulator)
     """
-    module_name = 'top'
+
     if toplevel is None:
-        toplevel = module_name
+        toplevel = module_name = 'top'
         if module is None:
             raise ValueError("Top-level name must be provided if no Amaranth module is given")
+    else:
+        module_name = toplevel
 
     runner = _RunnerHelper(
         module = module,
