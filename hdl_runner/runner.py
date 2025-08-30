@@ -468,7 +468,8 @@ class _RunnerHelper:
         for key, new_sources in kwargs.items():
             if new_sources is None:
                 new_sources = []
-            elif key not in self.langs:
+
+            if new_sources and key not in self.langs:
                 raise ValueError(f"Simulator {self.simulator} doesn't support {key} sources")
 
             if not isinstance(new_sources, (list, tuple, set)):
