@@ -493,6 +493,7 @@ def run(
     vcd_file: str = None, # For backwards compatibility
     timescale: tuple = ('1ns', '1ps'),
     lang: str = None,
+    caller_file: str = None,
 ):
     """
     Main entry point to build and run a simulation.
@@ -513,6 +514,7 @@ def run(
         vcd_file: Deprecated, use waveform_file instead.
         timescale: HDL timescale as a tuple.
         lang: HDL language to be used (mostly just required for unknown simulator)
+        caller_file: Path to python file with the testbench. Default is the file calling run().
     """
 
     if toplevel is None:
@@ -551,9 +553,12 @@ def run(
         if waveform_file is None:
             waveform_file = vcd_file
 
+        if caller_file is None:
+            caller_file = os.path.abspath(inspect.stack()[1].filename)
+
         sim = runner.Sim(
             hdl_toplevel        = toplevel,
-            caller_file         = os.path.abspath(inspect.stack()[1].filename),
+            caller_file         = caller_file,
             parameters          = parameters,
             extra_env           = extra_env,
             waveform_file       = waveform_file,
