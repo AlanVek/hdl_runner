@@ -38,6 +38,7 @@ jobs:
       - name: Install verilator
         run: |
           git clone -b v5.042 --recursive https://github.com/verilator/verilator
+          cd verilator
           unset VERILATOR_ROOT
           autoconf
           ./configure
