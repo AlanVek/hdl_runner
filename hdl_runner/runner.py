@@ -3,7 +3,6 @@ import tempfile
 import shutil
 import inspect
 import warnings
-import importlib.util
 from amaranth.back import verilog
 from amaranth.build.plat import Platform
 import find_libpython
@@ -14,8 +13,6 @@ from importlib.metadata import version
 from packaging.version import Version
 
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
-
-print(COCOTB_2_0_0)
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
@@ -186,8 +183,11 @@ class Simulator:
         Build the simulation using the selected simulator.
         """
         self._pre_build()
+        hdl_sources = self.hdl_sources
+        if COCOTB_2_0_0:
+            hdl_sources = {'sources': [source for sources in self.hdl_sources.values() for source in sources]}
         self.runner.build(
-            **self.hdl_sources,
+            **hdl_sources,
             hdl_toplevel    = self.hdl_toplevel,
             waves           = self.has_waves,
             timescale       = self.timescale,
@@ -262,6 +262,16 @@ class Icarus(Simulator):
 
         self.runner._create_iverilog_dump_file = _create_iverilog_dump_file.__get__(self.runner)
 
+    def _test_command_workaround(self):
+        def _test_command(runner):
+            ret = runner.__test_command()
+            if isinstance(ret, list) and len(ret) > 0 and isinstance(ret[0], list) and '-none' in ret[0] and '-vcd' in ret[0]:
+                ret[0].remove('-none')
+            return ret
+
+        self.runner.__test_command = self.runner._test_command
+        self.runner._test_command = _test_command.__get__(self.runner)
+
     def _pre_build(self):
         """
         Prepare Icarus-specific build arguments and waveform handling.
@@ -287,6 +297,9 @@ class Icarus(Simulator):
         # Workaround to export VCD
         if self.waveform_format != 'fst':
             self.has_waves = False
+
+        if COCOTB_2_0_0:
+            self._test_command_workaround()
 
 class Verilator(Simulator):
     """
