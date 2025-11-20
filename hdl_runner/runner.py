@@ -11,7 +11,7 @@ import sys
 import cocotb
 from amaranth import Record, Signal
 import cocotb_tools
-from cocotb_tools.runner import get_runner
+from cocotb_tools.runner import get_runner, _as_sv_literal
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
@@ -229,11 +229,32 @@ class Icarus(Simulator):
     """
     langs = ('verilog',)
 
+    def _create_iverilog_dump_file_workaround(self):
+        def _create_iverilog_dump_file(runner) -> None:
+            dumpfile_path = _as_sv_literal(str(runner.build_dir / f"{runner.hdl_toplevel}.fst"))
+            with open(runner.iverilog_dump_file, "w") as f:
+                f.write("module cocotb_iverilog_dump();\n")
+                f.write("initial begin\n")
+                # f.write("    string dumpfile_path;")
+                # f.write(
+                #     '    if ($value$plusargs("dumpfile_path=%s", dumpfile_path)) begin\n'
+                # )
+                # f.write("        $dumpfile(dumpfile_path);\n")
+                # f.write("    end else begin\n")
+                f.write(f"        $dumpfile({dumpfile_path});\n")
+                # f.write("    end\n")
+                f.write(f"    $dumpvars(0, {runner.hdl_toplevel});\n")
+                f.write("end\n")
+                f.write("endmodule\n")
+
+        self.runner._create_iverilog_dump_file = _create_iverilog_dump_file.__get__(self.runner)
+
     def _pre_build(self):
         """
         Prepare Icarus-specific build arguments and waveform handling.
         """
         super()._pre_build()
+        self._create_iverilog_dump_file_workaround()
 
         # Workaround for uninitialized registers
         self.build_args.append('-g2005')
