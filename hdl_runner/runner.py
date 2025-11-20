@@ -10,10 +10,11 @@ import find_libpython
 import sys
 import cocotb
 from amaranth import Record, Signal
+import cocotb_tools
+from cocotb_tools.runner import get_runner
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
-    from cocotb.runner import get_runner
     from amaranth.hdl.ast import SignalDict, SignalKey
 
 def open_ports(ports) -> list:
@@ -144,12 +145,13 @@ class Simulator:
                     )
                 runner.env["LIBPYTHON_LOC"] = libpython_path
 
-            runner.env["PATH"] += os.pathsep + cocotb.config.libs_dir
+            runner.env["PATH"] += os.pathsep + str(cocotb_tools.config.libs_dir)
             if self.pythonpath is not None:
                 runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [self.pythonpath])
+            runner.env["PYGPI_PYTHON_BIN"] = sys.executable
             # runner.env["PYTHONHOME"] = sys.base_prefix
-            runner.env["TOPLEVEL"] = runner.sim_hdl_toplevel
-            runner.env["MODULE"] = runner.test_module
+            runner.env["COCOTB_TOPLEVEL"] = runner.sim_hdl_toplevel
+            runner.env["COCOTB_TEST_MODULES"] = runner.test_module
 
         self.runner._set_env = _set_env.__get__(self.runner)
 
