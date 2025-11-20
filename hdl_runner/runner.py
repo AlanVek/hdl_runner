@@ -3,6 +3,7 @@ import tempfile
 import shutil
 import inspect
 import warnings
+import importlib.util
 from amaranth.back import verilog
 from amaranth.build.plat import Platform
 import find_libpython
@@ -70,6 +71,7 @@ class Simulator:
         hdl_toplevel: str,
         caller_file: str,
         hdl_sources: dict[str, list[str]],
+        pythonpath: str = None,
         parameters: dict = None,
         extra_env: dict = None,
         waveform_file: str = None,
@@ -83,6 +85,7 @@ class Simulator:
             hdl_toplevel: Name of the top-level module/entity.
             caller_file: Path to the Python file invoking the runner.
             hdl_sources: Dictionary of HDL type and source files.
+            pythonpath: Python path to add include directories.
             parameters: Dictionary of parameters to pass to the design.
             extra_env: Extra environment variables for the simulator.
             waveform_file: Output file for simulation waveforms.
@@ -99,6 +102,7 @@ class Simulator:
         self.hdl_toplevel       = hdl_toplevel
         self.caller_file        = caller_file
         self.hdl_sources        = hdl_sources
+        self.pythonpath         = pythonpath
         self.parameters         = parameters
         self.extra_env          = extra_env
         self.waveform_file      = waveform_file
@@ -106,7 +110,7 @@ class Simulator:
         self.directory          = directory
         self.timescale          = timescale
 
-        self.test_module        = os.path.splitext(os.path.basename(caller_file))[0]
+        self.test_module        = caller_file
         self.wave_name          = waveform_file
         self.has_waves          = waveform_file is not None
         self.build_args         = extra_args or []
@@ -141,7 +145,8 @@ class Simulator:
                 runner.env["LIBPYTHON_LOC"] = libpython_path
 
             runner.env["PATH"] += os.pathsep + cocotb.config.libs_dir
-            runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [os.path.dirname(self.caller_file)])
+            if self.pythonpath is not None:
+                runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [self.pythonpath])
             # runner.env["PYTHONHOME"] = sys.base_prefix
             runner.env["TOPLEVEL"] = runner.sim_hdl_toplevel
             runner.env["MODULE"] = runner.test_module
@@ -484,6 +489,75 @@ class _RunnerHelper:
 
             self.hdl_sources[key] = list(new_sources)
 
+    @classmethod
+    def resolve_caller(cls, caller: str = None):
+        if caller is None:
+            stack = inspect.stack()[2]
+            frame = stack[0]
+            module = inspect.getmodule(frame)
+
+            if module is None:
+                caller_file = os.path.splitext(os.path.basename(stack.filename))[0]
+                pythonpath = os.path.dirname(os.path.abspath(stack.filename))
+            elif module.__name__ == '__main__':
+                caller_file = os.path.splitext(os.path.basename(module.__file__))[0]
+                pythonpath = os.path.dirname(os.path.abspath(module.__file__))
+            else:
+                caller_file = module.__name__
+                pythonpath = None
+
+        elif '/' in caller or '\\' in caller or caller.endswith('.py'):
+            if not os.path.isabs(caller):
+                raise ValueError(f"Caller file must be an absolute path, not {caller}")
+
+            module_name = cls._full_module_path_from_file(caller)
+            if module_name is None:
+                caller_file = os.path.splitext(os.path.basename(caller))[0]
+                pythonpath = os.path.dirname(caller)
+            else:
+                caller_file = module_name
+                pythonpath = None
+
+        else:
+            caller_file = caller
+            pythonpath = None
+
+        return caller_file, pythonpath
+
+    @staticmethod
+    def _is_package_dir(dir_path: str) -> bool:
+        print('Dir path:', dir_path)
+        if os.path.isfile(os.path.join(dir_path, "__init__.py")):
+            return True
+
+        for p in sys.path:
+            if os.path.abspath(dir_path).startswith(os.path.join(os.path.abspath(p), '')):
+                print('Matches:', os.path.abspath(p), dir_path)
+                return True
+
+        return False
+
+    @classmethod
+    def _full_module_path_from_file(cls, path: str):
+        dir_path = os.path.dirname(path)
+        filename = os.path.splitext(os.path.basename(path))[0]
+
+        components = [filename]
+        cur = dir_path
+
+        while True:
+            parent = os.path.dirname(cur)
+            base = os.path.basename(cur)
+
+            if cls._is_package_dir(cur):
+                components.append(base)
+                cur = parent
+            else:
+                break
+
+        components.reverse()
+        return ".".join(components)
+
 def run(
     module = None,
     ports = None,
@@ -562,12 +636,12 @@ def run(
         if waveform_file is None:
             waveform_file = vcd_file
 
-        if caller_file is None:
-            caller_file = os.path.abspath(inspect.stack()[1].filename)
+        caller_file, pythonpath = runner.resolve_caller(caller_file)
 
         sim = runner.Sim(
             hdl_toplevel        = toplevel,
             caller_file         = caller_file,
+            pythonpath          = pythonpath,
             parameters          = parameters,
             extra_env           = extra_env,
             waveform_file       = waveform_file,
