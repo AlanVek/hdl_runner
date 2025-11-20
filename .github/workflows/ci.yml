@@ -44,7 +44,7 @@ jobs:
           autoconf
           ./configure
           make -j `nproc`
-          make install
+          sudo make install
 
       - name: Set up Python virtual environment
         run: |
