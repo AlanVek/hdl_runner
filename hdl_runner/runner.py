@@ -10,12 +10,22 @@ import find_libpython
 import sys
 import cocotb
 from amaranth import Record, Signal
-import cocotb_tools
-from cocotb_tools.runner import get_runner, _as_sv_literal
+from importlib.metadata import version
+from packaging.version import Version
+
+COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
+
+print(COCOTB_2_0_0)
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
+    if not COCOTB_2_0_0:
+        from cocotb.runner import get_runner
     from amaranth.hdl.ast import SignalDict, SignalKey
+
+if COCOTB_2_0_0:
+    import cocotb_tools
+    from cocotb_tools.runner import get_runner, _as_sv_literal
 
 def open_ports(ports) -> list:
     """
@@ -145,13 +155,16 @@ class Simulator:
                     )
                 runner.env["LIBPYTHON_LOC"] = libpython_path
 
-            runner.env["PATH"] += os.pathsep + str(cocotb_tools.config.libs_dir)
+            cocotb_libs = str(cocotb_tools.config.libs_dir if COCOTB_2_0_0 else cocotb.config.libs_dir)
+
+            runner.env["PATH"] += os.pathsep + cocotb_libs
             if self.pythonpath is not None:
                 runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [self.pythonpath])
-            runner.env["PYGPI_PYTHON_BIN"] = sys.executable
+            if COCOTB_2_0_0:
+                runner.env["PYGPI_PYTHON_BIN"] = sys.executable
             # runner.env["PYTHONHOME"] = sys.base_prefix
-            runner.env["COCOTB_TOPLEVEL"] = runner.sim_hdl_toplevel
-            runner.env["COCOTB_TEST_MODULES"] = runner.test_module
+            runner.env[("COCOTB_" if COCOTB_2_0_0 else "") + "TOPLEVEL"] = runner.sim_hdl_toplevel
+            runner.env["COCOTB_TEST_MODULES" if COCOTB_2_0_0 else "MODULE"] = runner.test_module
 
         self.runner._set_env = _set_env.__get__(self.runner)
 
@@ -254,7 +267,8 @@ class Icarus(Simulator):
         Prepare Icarus-specific build arguments and waveform handling.
         """
         super()._pre_build()
-        self._create_iverilog_dump_file_workaround()
+        if COCOTB_2_0_0:
+            self._create_iverilog_dump_file_workaround()
 
         # Workaround for uninitialized registers
         self.build_args.append('-g2005')
