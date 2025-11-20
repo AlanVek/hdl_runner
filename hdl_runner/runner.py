@@ -540,62 +540,48 @@ class _RunnerHelper:
             self.hdl_sources[key] = list(new_sources)
 
     @classmethod
-    def resolve_caller(cls, caller: str = None):
+    def resolve_caller(cls, caller: str = None) -> tuple[str, str]:
         if caller is None:
             caller = os.path.abspath(inspect.stack()[2].filename)
 
         if '/' in caller or '\\' in caller or caller.endswith('.py'):
-            if not os.path.isabs(caller):
+            if not os.path.isabs(caller) or os.path.splitext(caller)[1] not in ('', '.py'):
                 raise ValueError(f"Caller file must be an absolute path, not {caller}")
-
-            module_name = cls._full_module_path_from_file(caller)
-            if module_name is None:
-                caller_file = os.path.splitext(os.path.basename(caller))[0]
-                pythonpath = os.path.dirname(caller)
-            else:
-                caller_file = module_name
-                pythonpath = None
-
+            caller_file, pythonpath = cls._full_module_path_from_file(caller)
         else:
             caller_file = caller
             pythonpath = None
 
         return caller_file, pythonpath
 
-    @staticmethod
-    def _is_package_dir(dir_path: str) -> bool:
-        if not os.path.isfile(os.path.join(dir_path, "__init__.py")):
-            return False
+    @classmethod
+    def _full_module_path_from_file(cls, path: str) -> tuple[str, str]:
+        dir_path = os.path.dirname(os.path.abspath(path))
+        filename = os.path.splitext(os.path.basename(path))[0]
+        module = []
 
         for p in sys.path:
-            if os.path.abspath(dir_path).startswith(os.path.join(os.path.abspath(p), '')):
-                return True
+            abs_sys_path = os.path.join(os.path.abspath(p), '')
+            if not dir_path.startswith(abs_sys_path):
+                continue
 
-        return False
-
-    @classmethod
-    def _full_module_path_from_file(cls, path: str):
-        dir_path = os.path.dirname(path)
-        filename = os.path.splitext(os.path.basename(path))[0]
-
-        components = [filename]
-        cur = dir_path
-
-        while True:
-            parent = os.path.dirname(cur)
-            base = os.path.basename(cur)
-
-            if cls._is_package_dir(cur):
-                components.append(base)
-                cur = parent
+            rel_dir_path = dir_path.split(abs_sys_path, maxsplit=1)[1]
+            for directory in rel_dir_path.split(os.sep):
+                next_dir = os.path.join(abs_sys_path, directory)
+                if not os.path.isfile(os.path.join(next_dir, '__init__.py')):
+                    break
+                module.append(directory)
+                abs_sys_path = next_dir
             else:
                 break
 
-        if len(components) <= 1:
-            return None
+            module.clear()
 
-        components.reverse()
-        return ".".join(components)
+        if module:
+            module.append(filename)
+            return '.'.join(module), None
+
+        return filename, dir_path
 
 def run(
     module = None,
