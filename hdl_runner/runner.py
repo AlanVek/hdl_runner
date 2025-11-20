@@ -27,6 +27,9 @@ def open_ports(ports) -> list:
         List of Signal objects.
     """
 
+    if isinstance(ports, (int, str, float)):
+        raise ValueError(f"Invalid port: {ports}")
+
     if not isinstance(ports, Record) and hasattr(ports, 'as_value') and callable(ports.as_value):
         ports = ports.as_value()
 
@@ -73,6 +76,7 @@ class Simulator:
         random_seed: int = None,
         directory: str = '.',
         timescale: tuple = ('1ns', '1ps'),
+        extra_args: list[str] = None,
     ):
         """
         Args:
@@ -105,10 +109,13 @@ class Simulator:
         self.test_module        = os.path.splitext(os.path.basename(caller_file))[0]
         self.wave_name          = waveform_file
         self.has_waves          = waveform_file is not None
-        self.build_args         = []
+        self.build_args         = extra_args or []
         self.test_args          = []
         self.plusargs           = []
         self.waveform_format    = None
+
+        if not isinstance(self.build_args, list):
+            raise ValueError(f"Invalid extra_args: {extra_args}")
 
         if waveform_file is not None:
             extension = os.path.splitext(waveform_file)[-1][1:]
@@ -494,6 +501,7 @@ def run(
     timescale: tuple = ('1ns', '1ps'),
     lang: str = None,
     caller_file: str = None,
+    extra_args: list = None,
 ):
     """
     Main entry point to build and run a simulation.
@@ -515,6 +523,7 @@ def run(
         timescale: HDL timescale as a tuple.
         lang: HDL language to be used (mostly just required for unknown simulator)
         caller_file: Path to python file with the testbench. Default is the file calling run().
+        extra_args: list with extra compilation arguments
     """
 
     if toplevel is None:
@@ -566,6 +575,7 @@ def run(
             directory           = d,
             timescale           = timescale,
             hdl_sources         = {f'{key}_sources': value for key, value in runner.hdl_sources.items()},
+            extra_args          = extra_args,
         )
         sim.name = simulator
 
