@@ -492,21 +492,9 @@ class _RunnerHelper:
     @classmethod
     def resolve_caller(cls, caller: str = None):
         if caller is None:
-            stack = inspect.stack()[2]
-            frame = stack[0]
-            module = inspect.getmodule(frame)
+            caller = os.path.abspath(inspect.stack()[2].filename)
 
-            if module is None:
-                caller_file = os.path.splitext(os.path.basename(stack.filename))[0]
-                pythonpath = os.path.dirname(os.path.abspath(stack.filename))
-            elif module.__name__ == '__main__':
-                caller_file = os.path.splitext(os.path.basename(module.__file__))[0]
-                pythonpath = os.path.dirname(os.path.abspath(module.__file__))
-            else:
-                caller_file = module.__name__
-                pythonpath = None
-
-        elif '/' in caller or '\\' in caller or caller.endswith('.py'):
+        if '/' in caller or '\\' in caller or caller.endswith('.py'):
             if not os.path.isabs(caller):
                 raise ValueError(f"Caller file must be an absolute path, not {caller}")
 
@@ -526,13 +514,11 @@ class _RunnerHelper:
 
     @staticmethod
     def _is_package_dir(dir_path: str) -> bool:
-        print('Dir path:', dir_path)
-        if os.path.isfile(os.path.join(dir_path, "__init__.py")):
-            return True
+        if not os.path.isfile(os.path.join(dir_path, "__init__.py")):
+            return False
 
         for p in sys.path:
             if os.path.abspath(dir_path).startswith(os.path.join(os.path.abspath(p), '')):
-                print('Matches:', os.path.abspath(p), dir_path)
                 return True
 
         return False
@@ -554,6 +540,9 @@ class _RunnerHelper:
                 cur = parent
             else:
                 break
+
+        if len(components) <= 1:
+            return None
 
         components.reverse()
         return ".".join(components)
