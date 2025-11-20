@@ -39,7 +39,6 @@ jobs:
         run: |
           git clone -b v5.042 --recursive https://github.com/verilator/verilator
           unset VERILATOR_ROOT
-          git pull
           autoconf
           ./configure
           make -j `nproc`
