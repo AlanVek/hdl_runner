@@ -38,7 +38,8 @@ async def adder_test(dut):
         last = a + b
 
 @pytest.mark.parametrize('width', [1, 2, 4, 8])
-def test(width):
+@pytest.mark.parametrize('backend', ['celosia', 'amaranth'])
+def test(width, backend):
 
     from glob import glob
 
@@ -48,7 +49,8 @@ def test(width):
         verilog_sources = glob(os.path.join(os.path.dirname(os.path.dirname(__file__)), '*.v')),
         parameters = {'size': width},
         simulator = 'verilator',
+        backend = backend,
     )
 
 if __name__ == '__main__':
-    test(8)
+    test(8, 'amaranth')
