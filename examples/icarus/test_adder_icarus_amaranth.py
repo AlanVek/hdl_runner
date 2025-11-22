@@ -56,7 +56,7 @@ async def adder_test(dut):
         await RisingEdge(dut.clk)
 
         if last is not None:
-            assert last == dut.o.value.integer, f"Test failed: {last} != {dut.o.value.integer}"
+            assert last == dut.o.value, f"Test failed: {last} != {dut.o.value}"
 
         last = a + b
 

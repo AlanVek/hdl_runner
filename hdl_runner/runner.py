@@ -7,12 +7,24 @@ from celosia import Platform, get_lang_map
 import find_libpython
 import sys
 import cocotb
-from amaranth import Record, Signal
+from amaranth import Signal
+from importlib.metadata import version
+from packaging.version import Version
+
+COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
-    from cocotb.runner import get_runner
+    if not COCOTB_2_0_0:
+        from cocotb.runner import get_runner
+try:
+    from amaranth.hdl._ast import SignalDict, SignalKey
+except ImportError:
     from amaranth.hdl.ast import SignalDict, SignalKey
+
+if COCOTB_2_0_0:
+    import cocotb_tools
+    from cocotb_tools.runner import get_runner, _as_sv_literal
 
 def open_ports(ports) -> list:
     """
@@ -26,24 +38,27 @@ def open_ports(ports) -> list:
         List of Signal objects.
     """
 
-    if not isinstance(ports, Record) and hasattr(ports, 'as_value') and callable(ports.as_value):
+    if isinstance(ports, (int, str, float)):
+        raise ValueError(f"Invalid port: {ports}")
+
+    if hasattr(ports, 'as_value') and callable(ports.as_value):
         ports = ports.as_value()
 
     if isinstance(ports, Signal):
         return [ports]
 
-    res = []
+    if hasattr(ports, '_lhs_signals') and callable(ports._lhs_signals):
+        ports = ports._lhs_signals()
 
-    if isinstance(ports, Record):
-        ports = ports.fields
-    elif isinstance(ports, SignalKey):
+    if isinstance(ports, SignalKey):
         ports = [ports.signal]
 
-    if isinstance(ports, dict):
-        ports = ports.values()
-    elif isinstance(ports, SignalDict):
+    if isinstance(ports, SignalDict):
         ports = ports.keys()
+    elif isinstance(ports, dict):
+        ports = ports.values()
 
+    res = []
     try:
         for pin in ports:
             res += open_ports(pin)
@@ -66,18 +81,21 @@ class Simulator:
         hdl_toplevel: str,
         caller_file: str,
         hdl_sources: dict[str, list[str]],
+        pythonpath: str = None,
         parameters: dict = None,
         extra_env: dict = None,
         waveform_file: str = None,
         random_seed: int = None,
         directory: str = '.',
         timescale: tuple = ('1ns', '1ps'),
+        extra_args: list[str] = None,
     ):
         """
         Args:
             hdl_toplevel: Name of the top-level module/entity.
             caller_file: Path to the Python file invoking the runner.
             hdl_sources: Dictionary of HDL type and source files.
+            pythonpath: Python path to add include directories.
             parameters: Dictionary of parameters to pass to the design.
             extra_env: Extra environment variables for the simulator.
             waveform_file: Output file for simulation waveforms.
@@ -94,6 +112,7 @@ class Simulator:
         self.hdl_toplevel       = hdl_toplevel
         self.caller_file        = caller_file
         self.hdl_sources        = hdl_sources
+        self.pythonpath         = pythonpath
         self.parameters         = parameters
         self.extra_env          = extra_env
         self.waveform_file      = waveform_file
@@ -101,13 +120,16 @@ class Simulator:
         self.directory          = directory
         self.timescale          = timescale
 
-        self.test_module        = os.path.splitext(os.path.basename(caller_file))[0]
+        self.test_module        = caller_file
         self.wave_name          = waveform_file
         self.has_waves          = waveform_file is not None
-        self.build_args         = []
+        self.build_args         = extra_args or []
         self.test_args          = []
         self.plusargs           = []
         self.waveform_format    = None
+
+        if not isinstance(self.build_args, list):
+            raise ValueError(f"Invalid extra_args: {extra_args}")
 
         if waveform_file is not None:
             extension = os.path.splitext(waveform_file)[-1][1:]
@@ -132,11 +154,16 @@ class Simulator:
                     )
                 runner.env["LIBPYTHON_LOC"] = libpython_path
 
-            runner.env["PATH"] += os.pathsep + cocotb.config.libs_dir
-            runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [os.path.dirname(self.caller_file)])
+            cocotb_libs = str(cocotb_tools.config.libs_dir if COCOTB_2_0_0 else cocotb.config.libs_dir)
+
+            runner.env["PATH"] += os.pathsep + cocotb_libs
+            if self.pythonpath is not None:
+                runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [self.pythonpath])
+            if COCOTB_2_0_0:
+                runner.env["PYGPI_PYTHON_BIN"] = sys.executable
             # runner.env["PYTHONHOME"] = sys.base_prefix
-            runner.env["TOPLEVEL"] = runner.sim_hdl_toplevel
-            runner.env["MODULE"] = runner.test_module
+            runner.env[("COCOTB_" if COCOTB_2_0_0 else "") + "TOPLEVEL"] = runner.sim_hdl_toplevel
+            runner.env["COCOTB_TEST_MODULES" if COCOTB_2_0_0 else "MODULE"] = runner.test_module
 
         self.runner._set_env = _set_env.__get__(self.runner)
 
@@ -158,8 +185,11 @@ class Simulator:
         Build the simulation using the selected simulator.
         """
         self._pre_build()
+        hdl_sources = self.hdl_sources
+        if COCOTB_2_0_0:
+            hdl_sources = {'sources': [source for sources in self.hdl_sources.values() for source in sources]}
         self.runner.build(
-            **self.hdl_sources,
+            **hdl_sources,
             hdl_toplevel    = self.hdl_toplevel,
             waves           = self.has_waves,
             timescale       = self.timescale,
@@ -214,11 +244,43 @@ class Icarus(Simulator):
     """
     langs = ('verilog',)
 
+    def _create_iverilog_dump_file_workaround(self):
+        def _create_iverilog_dump_file(runner) -> None:
+            dumpfile_path = _as_sv_literal(str(runner.build_dir / f"{runner.hdl_toplevel}.fst"))
+            with open(runner.iverilog_dump_file, "w") as f:
+                f.write("module cocotb_iverilog_dump();\n")
+                f.write("initial begin\n")
+                # f.write("    string dumpfile_path;")
+                # f.write(
+                #     '    if ($value$plusargs("dumpfile_path=%s", dumpfile_path)) begin\n'
+                # )
+                # f.write("        $dumpfile(dumpfile_path);\n")
+                # f.write("    end else begin\n")
+                f.write(f"        $dumpfile({dumpfile_path});\n")
+                # f.write("    end\n")
+                f.write(f"    $dumpvars(0, {runner.hdl_toplevel});\n")
+                f.write("end\n")
+                f.write("endmodule\n")
+
+        self.runner._create_iverilog_dump_file = _create_iverilog_dump_file.__get__(self.runner)
+
+    def _test_command_workaround(self):
+        def _test_command(runner):
+            ret = runner.__test_command()
+            if isinstance(ret, list) and len(ret) > 0 and isinstance(ret[0], list) and '-none' in ret[0] and '-vcd' in ret[0]:
+                ret[0].remove('-none')
+            return ret
+
+        self.runner.__test_command = self.runner._test_command
+        self.runner._test_command = _test_command.__get__(self.runner)
+
     def _pre_build(self):
         """
         Prepare Icarus-specific build arguments and waveform handling.
         """
         super()._pre_build()
+        if COCOTB_2_0_0:
+            self._create_iverilog_dump_file_workaround()
 
         # Workaround for uninitialized registers
         self.build_args.append('-g2005')
@@ -237,6 +299,9 @@ class Icarus(Simulator):
         # Workaround to export VCD
         if self.waveform_format != 'fst':
             self.has_waves = False
+
+        if COCOTB_2_0_0:
+            self._test_command_workaround()
 
 class Verilator(Simulator):
     """
@@ -453,6 +518,50 @@ class _RunnerHelper:
 
             self.hdl_sources[key] = list(new_sources)
 
+    @classmethod
+    def resolve_caller(cls, caller: str = None) -> tuple[str, str]:
+        if caller is None:
+            caller = os.path.abspath(inspect.stack()[2].filename)
+
+        if '/' in caller or '\\' in caller or caller.endswith('.py'):
+            if not os.path.isabs(caller) or os.path.splitext(caller)[1] not in ('', '.py'):
+                raise ValueError(f"Caller file must be an absolute path, not {caller}")
+            caller_file, pythonpath = cls._full_module_path_from_file(caller)
+        else:
+            caller_file = caller
+            pythonpath = None
+
+        return caller_file, pythonpath
+
+    @classmethod
+    def _full_module_path_from_file(cls, path: str) -> tuple[str, str]:
+        dir_path = os.path.dirname(os.path.abspath(path))
+        filename = os.path.splitext(os.path.basename(path))[0]
+        module = []
+
+        for p in sys.path:
+            abs_sys_path = os.path.join(os.path.abspath(p), '')
+            if not dir_path.startswith(abs_sys_path):
+                continue
+
+            rel_dir_path = dir_path.split(abs_sys_path, maxsplit=1)[1]
+            for directory in rel_dir_path.split(os.sep):
+                next_dir = os.path.join(abs_sys_path, directory)
+                if not os.path.isfile(os.path.join(next_dir, '__init__.py')):
+                    break
+                module.append(directory)
+                abs_sys_path = next_dir
+            else:
+                break
+
+            module.clear()
+
+        if module:
+            module.append(filename)
+            return '.'.join(module), None
+
+        return filename, dir_path
+
 def run(
     module = None,
     ports = None,
@@ -469,6 +578,8 @@ def run(
     vcd_file: str = None, # For backwards compatibility
     timescale: tuple = ('1ns', '1ps'),
     lang: str = None,
+    caller_file: str = None,
+    extra_args: list = None,
 ):
     """
     Main entry point to build and run a simulation.
@@ -489,6 +600,8 @@ def run(
         vcd_file: Deprecated, use waveform_file instead.
         timescale: HDL timescale as a tuple.
         lang: HDL language to be used (mostly just required for unknown simulator)
+        caller_file: Path to python file with the testbench. Default is the file calling run().
+        extra_args: list with extra compilation arguments
     """
 
     if toplevel is None:
@@ -503,7 +616,7 @@ def run(
         lang = lang,
         simulator = simulator,
         module_name = module_name,
-        ports = ports or [],
+        ports = [] if ports is None else ports,
     )
 
     runner.set_hdl_sources(**{
@@ -527,9 +640,12 @@ def run(
         if waveform_file is None:
             waveform_file = vcd_file
 
+        caller_file, pythonpath = runner.resolve_caller(caller_file)
+
         sim = runner.Sim(
             hdl_toplevel        = toplevel,
-            caller_file         = os.path.abspath(inspect.stack()[1].filename),
+            caller_file         = caller_file,
+            pythonpath          = pythonpath,
             parameters          = parameters,
             extra_env           = extra_env,
             waveform_file       = waveform_file,
@@ -537,6 +653,7 @@ def run(
             directory           = d,
             timescale           = timescale,
             hdl_sources         = {f'{key}_sources': value for key, value in runner.hdl_sources.items()},
+            extra_args          = extra_args,
         )
         sim.name = simulator
 
