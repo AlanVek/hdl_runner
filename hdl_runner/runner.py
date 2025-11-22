@@ -8,7 +8,7 @@ from amaranth.build.plat import Platform
 import find_libpython
 import sys
 import cocotb
-from amaranth import Record, Signal
+from amaranth import Signal
 from importlib.metadata import version
 from packaging.version import Version
 
@@ -39,24 +39,24 @@ def open_ports(ports) -> list:
     if isinstance(ports, (int, str, float)):
         raise ValueError(f"Invalid port: {ports}")
 
-    if not isinstance(ports, Record) and hasattr(ports, 'as_value') and callable(ports.as_value):
+    if hasattr(ports, 'as_value') and callable(ports.as_value):
         ports = ports.as_value()
 
     if isinstance(ports, Signal):
         return [ports]
 
-    res = []
+    if hasattr(ports, '_lhs_signals') and callable(ports._lhs_signals):
+        ports = ports._lhs_signals()
 
-    if isinstance(ports, Record):
-        ports = ports.fields
-    elif isinstance(ports, SignalKey):
+    if isinstance(ports, SignalKey):
         ports = [ports.signal]
 
-    if isinstance(ports, dict):
-        ports = ports.values()
-    elif isinstance(ports, SignalDict):
+    if isinstance(ports, SignalDict):
         ports = ports.keys()
+    elif isinstance(ports, dict):
+        ports = ports.values()
 
+    res = []
     try:
         for pin in ports:
             res += open_ports(pin)
