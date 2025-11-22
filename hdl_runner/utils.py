@@ -63,5 +63,5 @@ def _get_backend(backend: str = None) -> Backend:
 def get_lang_map(backend: str = None):
     return _get_backend(backend).get_lang_map()
 
-def convert_platform(platform: Union[AmaranthPlatform, CelosiaPlatform], backend: str):
+def convert_platform(platform: Union[AmaranthPlatform, CelosiaPlatform], backend: str = None):
     return _get_backend(backend).convert_platform(platform)
