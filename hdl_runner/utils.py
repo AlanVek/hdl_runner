@@ -1,5 +1,8 @@
 from amaranth import Signal
-from amaranth.back import verilog
+from amaranth.build.plat import Platform as AmaranthPlatform
+from celosia import Platform as CelosiaPlatform
+from typing import Union
+from hdl_runner.backend import *
 
 try:
     from amaranth.hdl._ast import SignalDict, SignalKey
@@ -47,25 +50,18 @@ def open_ports(ports) -> list:
 
     return res
 
-def get_lang_map():
-    """
-    Returns a mapping of HDL language names to converter classes.
-    """
-    class VerilogConverter:
-        extensions = ('v',)
-        default_extension = 'v'
+def _get_backend(backend: str = None) -> Backend:
+    # Default backend is amaranth
+    if backend is None or backend == 'amaranth':
+        return AmaranthBackend()
+    
+    if backend == 'celosia':
+        return CelosiaBackend()
+    
+    raise ValueError(f"Unknown backend: {backend}")
 
-        def convert(self, *args, **kwargs):
-            return verilog.convert(*args, **kwargs)
+def get_lang_map(backend: str = None):
+    return _get_backend(backend).get_lang_map()
 
-    class VHDLConverter:
-        extensions = ('vhd', 'vhdl')
-        default_extension = 'vhd'
-
-        def convert(self, *args, **kwargs):
-            raise NotImplementedError("Amaranth to VHDL not supported")
-
-    return {
-        'verilog': VerilogConverter,
-        'vhdl': VHDLConverter,
-    }
+def convert_platform(platform: Union[AmaranthPlatform, CelosiaPlatform], backend: str = None):
+    return _get_backend(backend).convert_platform(platform)

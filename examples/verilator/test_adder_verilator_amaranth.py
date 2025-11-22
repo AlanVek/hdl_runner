@@ -61,14 +61,16 @@ async def adder_test(dut):
         last = a + b
 
 @pytest.mark.parametrize('width', [1, 2, 4, 8])
-def test(width):
+@pytest.mark.parametrize('backend', ['celosia', 'amaranth'])
+def test(width, backend):
     adder = Adder(width, domain = 'sync')
     run(
         adder,
         ports = [adder.a, adder.b, adder.o],
         waveform_file = 'adder_verilator_amaranth.fst',
         simulator='verilator',
+        backend = backend,
     )
 
 if __name__ == '__main__':
-    test(8)
+    test(8, 'amaranth')
