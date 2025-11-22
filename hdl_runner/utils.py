@@ -1,5 +1,8 @@
 from amaranth import Signal
-from celosia import get_lang_map
+from amaranth.build.plat import Platform as AmaranthPlatform
+from celosia import Platform as CelosiaPlatform
+from typing import Union
+from hdl_runner.backend import *
 
 try:
     from amaranth.hdl._ast import SignalDict, SignalKey
@@ -46,3 +49,19 @@ def open_ports(ports) -> list:
         raise ValueError("Invalid ports received!") from None
 
     return res
+
+def _get_backend(backend: str = None) -> Backend:
+    # Default backend is amaranth
+    if backend is None or backend == 'amaranth':
+        return AmaranthBackend()
+    
+    if backend == 'celosia':
+        return CelosiaBackend()
+    
+    raise ValueError(f"Unknown backend: {backend}")
+
+def get_lang_map(backend: str = None):
+    return _get_backend(backend).get_lang_map()
+
+def convert_platform(platform: Union[AmaranthPlatform, CelosiaPlatform], backend: str):
+    return _get_backend(backend).convert_platform(platform)

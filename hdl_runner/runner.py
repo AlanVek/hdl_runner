@@ -2,11 +2,13 @@ import os
 import tempfile
 import inspect
 import warnings
-from celosia import Platform
+from amaranth.build.plat import Platform as AmaranthPlatform
+from celosia import Platform as CelosiaPlatform
 import sys
 import hdl_runner.sim
 from hdl_runner.sim import Simulator
-from hdl_runner.utils import get_lang_map, open_ports
+from hdl_runner.utils import get_lang_map, open_ports, convert_platform
+from typing import Union
 
 class _RunnerHelper:
     """
@@ -19,14 +21,16 @@ class _RunnerHelper:
         simulator: str = None,
         module_name: str = None,
         ports: list = None,
+        backend: str = None,
     ):
         self.module = module
         self.lang = lang
         self.simulator = simulator
         self.module_name = module_name
         self.ports = ports
+        self.backend = backend
 
-        self.lang_map = get_lang_map()
+        self.lang_map = get_lang_map(backend)
         self.hdl_sources: dict[str, list[str]] = {}
         self.extra_sources: dict[str] = {}
         self.Sim: type[Simulator] = None
@@ -57,7 +61,7 @@ class _RunnerHelper:
             self.langs.update((self.lang.lower(), *self.lang_map.keys()))
             self.Sim = Simulator
 
-    def _process_extra_sources(self, platform: Platform):
+    def _process_extra_sources(self, platform: Union[AmaranthPlatform, CelosiaPlatform]):
         if platform is None:
             return
 
@@ -94,7 +98,7 @@ class _RunnerHelper:
         """
         self.directory = directory
 
-    def convert_amaranth(self, platform: Platform):
+    def convert_amaranth(self, platform: Union[AmaranthPlatform, CelosiaPlatform]):
         """
         Converts the Amaranth module to HDL and adds it to sources.
 
@@ -122,7 +126,7 @@ class _RunnerHelper:
             self.module,
             name = self.module_name,
             ports = open_ports(self.ports),
-            platform = Platform.from_amaranth_platform(platform),
+            platform = convert_platform(platform, self.backend)
         )
         with open(filename, 'w') as f:
             f.write(hdl_data)
@@ -212,6 +216,7 @@ def run(
     lang: str = None,
     caller_file: str = None,
     extra_args: list = None,
+    backend: str = None,
 ):
     """
     Main entry point to build and run a simulation.
@@ -249,6 +254,7 @@ def run(
         simulator = simulator,
         module_name = module_name,
         ports = [] if ports is None else ports,
+        backend = backend,
     )
 
     runner.set_hdl_sources(**{
