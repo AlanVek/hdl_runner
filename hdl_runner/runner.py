@@ -640,7 +640,7 @@ def run(
         lang = lang,
         simulator = simulator,
         module_name = module_name,
-        ports = ports or [],
+        ports = [] if ports is None else ports,
     )
 
     runner.set_hdl_sources(**{
