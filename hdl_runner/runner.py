@@ -239,6 +239,7 @@ def run(
         lang: HDL language to be used (mostly just required for unknown simulator)
         caller_file: Path to python file with the testbench. Default is the file calling run().
         extra_args: list with extra compilation arguments
+        backend: string with backend name (e.g. amaranth, celosia)
     """
 
     if toplevel is None:
