@@ -17,8 +17,9 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --fix-broken iverilog verilator python3-venv libgnat-13 \
-                                          llvm-18-dev wget libdw1t64 libllvm18 libreadline8t64 libtcl8.6 binutils
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --fix-broken iverilog python3-venv libgnat-13 \
+                                          llvm-18-dev wget libdw1t64 libllvm18 libreadline8t64 libtcl8.6 binutils \
+                                          git help2man perl python3 make g++ libfl2 libfl-dev zlib1g zlib1g-dev
 
       - name: Install GHDL
         run: |
@@ -35,6 +36,16 @@ jobs:
           wget https://github.com/nickg/nvc/releases/download/r${NVC_VERSION}/${NVC_FULL_VERSION}
           sudo dpkg -i ${NVC_FULL_VERSION} && rm ${NVC_FULL_VERSION}
 
+      - name: Install verilator
+        run: |
+          git clone -b v5.042 --recursive https://github.com/verilator/verilator
+          cd verilator
+          unset VERILATOR_ROOT
+          autoconf
+          ./configure
+          make -j `nproc`
+          sudo make install
+
       - name: Set up Python virtual environment
         run: |
           python3 -m venv venv
@@ -46,7 +57,13 @@ jobs:
           source venv/bin/activate
           pip install . pytest pytest-xdist
 
-      - name: Run tests
+      - name: Run tests with latest cocotb
         run: |
           source venv/bin/activate
+          python3 -m pytest -v -n auto examples/
+
+      - name: Run tests with cocotb 1.9.2
+        run: |
+          source venv/bin/activate
+          pip uninstall -y cocotb && pip install cocotb==1.9.2
           python3 -m pytest -v -n auto examples/

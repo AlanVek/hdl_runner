@@ -3,18 +3,26 @@ import tempfile
 import shutil
 import inspect
 import warnings
-import importlib.util
 from amaranth.back import verilog
 from amaranth.build.plat import Platform
 import find_libpython
 import sys
 import cocotb
 from amaranth import Record, Signal
+from importlib.metadata import version
+from packaging.version import Version
+
+COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
-    from cocotb.runner import get_runner
+    if not COCOTB_2_0_0:
+        from cocotb.runner import get_runner
     from amaranth.hdl.ast import SignalDict, SignalKey
+
+if COCOTB_2_0_0:
+    import cocotb_tools
+    from cocotb_tools.runner import get_runner, _as_sv_literal
 
 def open_ports(ports) -> list:
     """
@@ -144,12 +152,16 @@ class Simulator:
                     )
                 runner.env["LIBPYTHON_LOC"] = libpython_path
 
-            runner.env["PATH"] += os.pathsep + cocotb.config.libs_dir
+            cocotb_libs = str(cocotb_tools.config.libs_dir if COCOTB_2_0_0 else cocotb.config.libs_dir)
+
+            runner.env["PATH"] += os.pathsep + cocotb_libs
             if self.pythonpath is not None:
                 runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [self.pythonpath])
+            if COCOTB_2_0_0:
+                runner.env["PYGPI_PYTHON_BIN"] = sys.executable
             # runner.env["PYTHONHOME"] = sys.base_prefix
-            runner.env["TOPLEVEL"] = runner.sim_hdl_toplevel
-            runner.env["MODULE"] = runner.test_module
+            runner.env[("COCOTB_" if COCOTB_2_0_0 else "") + "TOPLEVEL"] = runner.sim_hdl_toplevel
+            runner.env["COCOTB_TEST_MODULES" if COCOTB_2_0_0 else "MODULE"] = runner.test_module
 
         self.runner._set_env = _set_env.__get__(self.runner)
 
@@ -171,8 +183,11 @@ class Simulator:
         Build the simulation using the selected simulator.
         """
         self._pre_build()
+        hdl_sources = self.hdl_sources
+        if COCOTB_2_0_0:
+            hdl_sources = {'sources': [source for sources in self.hdl_sources.values() for source in sources]}
         self.runner.build(
-            **self.hdl_sources,
+            **hdl_sources,
             hdl_toplevel    = self.hdl_toplevel,
             waves           = self.has_waves,
             timescale       = self.timescale,
@@ -227,11 +242,43 @@ class Icarus(Simulator):
     """
     langs = ('verilog',)
 
+    def _create_iverilog_dump_file_workaround(self):
+        def _create_iverilog_dump_file(runner) -> None:
+            dumpfile_path = _as_sv_literal(str(runner.build_dir / f"{runner.hdl_toplevel}.fst"))
+            with open(runner.iverilog_dump_file, "w") as f:
+                f.write("module cocotb_iverilog_dump();\n")
+                f.write("initial begin\n")
+                # f.write("    string dumpfile_path;")
+                # f.write(
+                #     '    if ($value$plusargs("dumpfile_path=%s", dumpfile_path)) begin\n'
+                # )
+                # f.write("        $dumpfile(dumpfile_path);\n")
+                # f.write("    end else begin\n")
+                f.write(f"        $dumpfile({dumpfile_path});\n")
+                # f.write("    end\n")
+                f.write(f"    $dumpvars(0, {runner.hdl_toplevel});\n")
+                f.write("end\n")
+                f.write("endmodule\n")
+
+        self.runner._create_iverilog_dump_file = _create_iverilog_dump_file.__get__(self.runner)
+
+    def _test_command_workaround(self):
+        def _test_command(runner):
+            ret = runner.__test_command()
+            if isinstance(ret, list) and len(ret) > 0 and isinstance(ret[0], list) and '-none' in ret[0] and '-vcd' in ret[0]:
+                ret[0].remove('-none')
+            return ret
+
+        self.runner.__test_command = self.runner._test_command
+        self.runner._test_command = _test_command.__get__(self.runner)
+
     def _pre_build(self):
         """
         Prepare Icarus-specific build arguments and waveform handling.
         """
         super()._pre_build()
+        if COCOTB_2_0_0:
+            self._create_iverilog_dump_file_workaround()
 
         # Workaround for uninitialized registers
         self.build_args.append('-g2005')
@@ -250,6 +297,9 @@ class Icarus(Simulator):
         # Workaround to export VCD
         if self.waveform_format != 'fst':
             self.has_waves = False
+
+        if COCOTB_2_0_0:
+            self._test_command_workaround()
 
 class Verilator(Simulator):
     """
