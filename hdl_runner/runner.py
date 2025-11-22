@@ -18,6 +18,9 @@ with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
     if not COCOTB_2_0_0:
         from cocotb.runner import get_runner
+try:
+    from amaranth.hdl._ast import SignalDict, SignalKey
+except ImportError:
     from amaranth.hdl.ast import SignalDict, SignalKey
 
 if COCOTB_2_0_0:
