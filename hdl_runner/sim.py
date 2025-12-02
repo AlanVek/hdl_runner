@@ -107,8 +107,10 @@ class Simulator:
             cocotb_libs = str(cocotb_tools.config.libs_dir if COCOTB_2_0_0 else cocotb.config.libs_dir)
 
             runner.env["PATH"] += os.pathsep + cocotb_libs
+            pythonpath = sys.path
             if self.pythonpath is not None:
-                runner.env["PYTHONPATH"] = os.pathsep.join(sys.path + [self.pythonpath])
+                pythonpath = pythonpath + [self.pythonpath]
+            runner.env["PYTHONPATH"] = os.pathsep.join(pythonpath)
             if COCOTB_2_0_0:
                 runner.env["PYGPI_PYTHON_BIN"] = sys.executable
             # runner.env["PYTHONHOME"] = sys.base_prefix
