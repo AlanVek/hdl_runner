@@ -6,16 +6,17 @@ import sys
 import cocotb
 from importlib.metadata import version
 from packaging.version import Version
+import subprocess
 
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
 if COCOTB_2_0_0:
     import cocotb_tools
-    from cocotb_tools.runner import get_runner, _as_sv_literal
+    from cocotb_tools.runner import get_runner, _as_sv_literal, _shlex_join
 else:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore")
-        from cocotb.runner import get_runner
+        from cocotb.runner import get_runner, shlex_join
 
 class Simulator:
     """
@@ -39,6 +40,7 @@ class Simulator:
         directory: str = '.',
         timescale: tuple = ('1ns', '1ps'),
         extra_args: list[str] = None,
+        timeout: float = None,
     ):
         """
         Args:
@@ -69,6 +71,7 @@ class Simulator:
         self.random_seed        = random_seed
         self.directory          = directory
         self.timescale          = timescale
+        self.timeout            = timeout
 
         self.test_module        = caller_file
         self.wave_name          = waveform_file
@@ -119,12 +122,43 @@ class Simulator:
 
         self.runner._set_env = _set_env.__get__(self.runner)
 
+    def _execute_cmds_workaround(self):
+        def _execute_cmds(runner, cmds, cwd, stdout = None):
+            __tracebackhide__ = True  # Hide the traceback when using PyTest.
+
+            for cmd in cmds:
+                if COCOTB_2_0_0:
+                    runner.log.info("Running command %s in directory %s", _shlex_join(cmd), cwd)
+                else:
+                    print(f"INFO: Running command {shlex_join(cmd)} in directory {cwd}")
+
+                kwargs = {}
+                if COCOTB_2_0_0:
+                    kwargs['check'] = True
+
+                # TODO: create a thread to handle stderr and log as error?
+                # TODO: log forwarding
+
+                stderr = None if stdout is None else subprocess.STDOUT
+                process = subprocess.run(
+                    cmd, cwd=cwd, env=runner.env, stdout=stdout, stderr=stderr, timeout=self.timeout, **kwargs
+                )
+
+                if not COCOTB_2_0_0:
+                    if process.returncode != 0:
+                        raise SystemExit(
+                            f"Process {process.args[0]!r} terminated with error {process.returncode}"
+                        )
+
+        self.runner._execute_cmds = _execute_cmds.__get__(self.runner)
+
     def _pre_build(self):
         """
         Prepare the simulator runner and environment before building.
         """
         self.runner = get_runner(self.name)
         self._set_env_workaround()
+        self._execute_cmds_workaround()
 
     def _pre_run(self):
         """

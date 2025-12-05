@@ -217,6 +217,7 @@ def run(
     caller_file: str = None,
     extra_args: list = None,
     backend: str = None,
+    timeout: float = None,
 ):
     """
     Main entry point to build and run a simulation.
@@ -293,6 +294,7 @@ def run(
             timescale           = timescale,
             hdl_sources         = {f'{key}_sources': value for key, value in runner.hdl_sources.items()},
             extra_args          = extra_args,
+            timeout             = timeout,
         )
         sim.name = simulator
 
