@@ -140,9 +140,15 @@ class Simulator:
                 # TODO: log forwarding
 
                 stderr = None if stdout is None else subprocess.STDOUT
-                subprocess.run(
+                process = subprocess.run(
                     cmd, cwd=cwd, env=runner.env, stdout=stdout, stderr=stderr, timeout=self.timeout, **kwargs
                 )
+
+                if not COCOTB_2_0_0:
+                    if process.returncode != 0:
+                        raise SystemExit(
+                            f"Process {process.args[0]!r} terminated with error {process.returncode}"
+                        )
 
         self.runner._execute_cmds = _execute_cmds.__get__(self.runner)
 
