@@ -209,11 +209,10 @@ class Simulator:
 
         if self.wave_name is not None:
             if os.path.isfile(self.wave_name):
-                if not os.path.samefile(
-                    os.path.realpath(os.path.expanduser(self.wave_name)),
-                    os.path.realpath(os.path.expanduser(self.waveform_file)),
-                ):
+                try:
                     shutil.copy2(self.wave_name, self.waveform_file)
+                except shutil.SameFileError:
+                    pass
             else:
                 warnings.warn(f"Failed to find waveform output file: {self.wave_name}", stacklevel=2)
 
