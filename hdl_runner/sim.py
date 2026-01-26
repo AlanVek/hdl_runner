@@ -74,7 +74,7 @@ class Simulator:
         self.timeout            = timeout
 
         self.test_module        = caller_file
-        self.wave_name          = waveform_file
+        self.wave_name          = None
         self.has_waves          = waveform_file is not None
         self.build_args         = extra_args or []
         self.test_args          = []
@@ -208,11 +208,14 @@ class Simulator:
             err_msg = str(e)
 
         if self.wave_name is not None:
-            wave = os.path.join(self.directory, self.wave_name)
-            if os.path.isfile(wave):
-                shutil.copy2(wave, self.waveform_file)
+            if os.path.isfile(self.wave_name):
+                if not os.path.samefile(
+                    os.path.realpath(os.path.expanduser(self.wave_name)),
+                    os.path.realpath(os.path.expanduser(self.waveform_file)),
+                ):
+                    shutil.copy2(self.wave_name, self.waveform_file)
             else:
-                warnings.warn(f"Failed to find waveform output file: {wave}", stacklevel=2)
+                warnings.warn(f"Failed to find waveform output file: {self.wave_name}", stacklevel=2)
 
         if err_msg is not None:
             raise RuntimeError(f"Test failed: {err_msg}")
@@ -232,7 +235,16 @@ class Icarus(Simulator):
 
     def _create_iverilog_dump_file_workaround(self):
         def _create_iverilog_dump_file(runner) -> None:
-            dumpfile_path = _as_sv_literal(str(runner.build_dir / f"{runner.hdl_toplevel}.fst"))
+            if self.has_waves:
+                dumpfile_path = os.path.abspath(self.waveform_file)
+            else:
+                dumpfile_path = runner.build_dir / f"{runner.hdl_toplevel}.fst"
+
+            if COCOTB_2_0_0:
+                dumpfile_path = _as_sv_literal(str(dumpfile_path))
+            else:
+                dumpfile_path = f'"{dumpfile_path}"'
+
             with open(runner.iverilog_dump_file, "w") as f:
                 f.write("module cocotb_iverilog_dump();\n")
                 f.write("initial begin\n")
@@ -265,14 +277,12 @@ class Icarus(Simulator):
         Prepare Icarus-specific build arguments and waveform handling.
         """
         super()._pre_build()
-        if COCOTB_2_0_0:
-            self._create_iverilog_dump_file_workaround()
+        self._create_iverilog_dump_file_workaround()
 
         # Workaround for uninitialized registers
         self.build_args.append('-g2005')
 
         if self.has_waves:
-            self.wave_name = f'{self.hdl_toplevel}.fst'
             if self.waveform_format == 'vcd':
                 self.plusargs.append('-vcd')
 
@@ -304,7 +314,7 @@ class Verilator(Simulator):
 
         if self.has_waves:
             extra_args = ['--trace-structs']
-            self.wave_name = f'dump.{self.waveform_format}'
+            self.wave_name = os.path.join(self.directory, f'dump.{self.waveform_format}')
             if self.waveform_format == 'fst':
                 extra_args.append('--trace-fst')
 
@@ -323,7 +333,6 @@ class Ghdl(Simulator):
         """
         super()._pre_build()
         self.hdl_toplevel = self.hdl_toplevel.lower()
-        self.wave_name = None
 
         if self.has_waves:
             self.plusargs.append(f'--{self.waveform_format}={os.path.abspath(self.waveform_file)}')
@@ -349,7 +358,6 @@ class Nvc(Simulator):
         """
         super()._pre_build()
         self.hdl_toplevel = self.hdl_toplevel.lower()
-        self.wave_name = None
 
         if self.has_waves:
             if self.waveform_format != 'fst':
