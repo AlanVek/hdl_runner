@@ -46,7 +46,7 @@ def open_ports(ports) -> list:
         for pin in ports:
             res += open_ports(pin)
     except TypeError:
-        raise ValueError("Invalid ports received!") from None
+        raise ValueError(f"Invalid ports received: {ports} (type {type(ports)})") from None
 
     return res
 
