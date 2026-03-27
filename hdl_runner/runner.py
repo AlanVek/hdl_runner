@@ -159,6 +159,8 @@ class _RunnerHelper:
         if caller is None:
             caller = os.path.abspath(inspect.stack()[2].filename)
 
+        caller = str(caller)
+
         if '/' in caller or '\\' in caller or caller.endswith('.py'):
             if not os.path.isabs(caller) or os.path.splitext(caller)[1] not in ('', '.py'):
                 raise ValueError(f"Caller file must be an absolute path, not {caller}")
