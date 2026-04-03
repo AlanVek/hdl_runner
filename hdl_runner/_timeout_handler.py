@@ -10,26 +10,20 @@ from packaging.version import Version
 
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
+from cocotb.regression import RegressionManager
 if COCOTB_2_0_0:
     from cocotb._decorators import Parameterized, Test
+    from cocotb._outcomes import Error as OutcomeError
     from cocotb.triggers import SimTimeoutError
 else:
     from cocotb.decorators import test as Test
+    from cocotb.outcomes import Error as OutcomeError
     from cocotb.result import SimTimeoutError
 
 _USER_MODULE = os.environ["HDL_RUNNER_TEST_MODULE"]
-_USER_PACKAGE = _USER_MODULE.rsplit(".", 1)[0] if "." in _USER_MODULE else None
 _SHUTDOWN_REQUESTED = False
 _SHUTDOWN_MESSAGE = None
 _TRACE_INSTALLED = False
-
-
-class _ShutdownOutcome:
-    def __init__(self, message):
-        self._message = message
-
-    def get(self):
-        raise SimTimeoutError(self._message)
 
 
 def _signal_to_message(signum):
@@ -45,29 +39,29 @@ def _get_shutdown_message():
     return _SHUTDOWN_MESSAGE or "hdl_runner timeout expired"
 
 
-def _frame_is_timeout_target(frame):
-    if frame.f_locals.get("_hdl_runner_in_wrapped_test", False):
-        return True
-
-    module_name = frame.f_globals.get("__name__", "")
-    if module_name == _USER_MODULE:
-        return True
-
-    return _USER_PACKAGE is not None and module_name.startswith(f"{_USER_PACKAGE}.")
+def _get_regression_manager():
+    return getattr(
+        cocotb,
+        "_regression_manager" if COCOTB_2_0_0 else "regression_manager",
+        None,
+    )
 
 
-def _stack_has_timeout_target(frame):
+def _get_scheduler():
+    return getattr(cocotb, "_scheduler_inst" if COCOTB_2_0_0 else "scheduler", None)
+
+
+def _frame_in_wrapped_test(frame):
     while frame is not None:
-        if _frame_is_timeout_target(frame):
+        if frame.f_locals.get("_hdl_runner_timeout_wrapper", False):
             return True
         frame = frame.f_back
     return False
 
 
 def _timeout_trace(frame, event, arg):
-    if _SHUTDOWN_REQUESTED and _stack_has_timeout_target(frame):
+    if _SHUTDOWN_REQUESTED and _frame_in_wrapped_test(frame):
         raise SimTimeoutError(_get_shutdown_message())
-
     return _timeout_trace
 
 
@@ -83,18 +77,65 @@ def _enable_timeout_trace(frame):
         frame = frame.f_back
 
 
-def _mark_regression_shutdown():
-    regression_manager = getattr(
-        cocotb,
-        "_regression_manager" if COCOTB_2_0_0 else "regression_manager",
-        None,
-    )
+def _has_active_test():
+    regression_manager = _get_regression_manager()
+    if regression_manager is None:
+        return False
+
+    if COCOTB_2_0_0:
+        running_test = getattr(regression_manager, "_running_test", None)
+        return running_test is not None and getattr(running_test, "_outcome", None) is None
+    else:
+        test_task = getattr(regression_manager, "_test_task", None)
+        if test_task is None:
+            return False
+        done = getattr(test_task, "done", None)
+        return not callable(done) or not done()
+
+
+def _abort_running_test():
+    regression_manager = _get_regression_manager()
     if regression_manager is None:
         return
 
     if COCOTB_2_0_0:
-        if getattr(regression_manager, "_sim_failure", None) is None:
-            regression_manager._sim_failure = _ShutdownOutcome(_get_shutdown_message())
+        running_test = getattr(regression_manager, "_running_test", None)
+        if running_test is not None and getattr(running_test, "_outcome", None) is None:
+            running_test.abort(OutcomeError(SimTimeoutError(_get_shutdown_message())))
+    else:
+        scheduler = _get_scheduler()
+        if scheduler is not None and getattr(regression_manager, "_test_task", None) is not None:
+            scheduler._finish_test(SimTimeoutError(_get_shutdown_message()))
+
+
+def _record_remaining_timeout_failures(regression_manager):
+    while True:
+        test = regression_manager._next_test()
+        if test is None:
+            return regression_manager._tear_down()
+        regression_manager._record_result(
+            test=test,
+            outcome=OutcomeError(SimTimeoutError(_get_shutdown_message())),
+            wall_time_s=0,
+            sim_time_ns=0,
+        )
+
+
+_original_execute = RegressionManager._execute
+
+
+def _patched_execute(self):
+    if not _SHUTDOWN_REQUESTED:
+        return _original_execute(self)
+
+    if COCOTB_2_0_0:
+        if getattr(self, "_sim_failure", None) is None:
+            self._sim_failure = OutcomeError(SimTimeoutError(_get_shutdown_message()))
+        return _original_execute(self)
+    else:
+        return _record_remaining_timeout_failures(self)
+
+RegressionManager._execute = _patched_execute
 
 
 def _request_shutdown(signum, frame):
@@ -103,24 +144,29 @@ def _request_shutdown(signum, frame):
     if not _SHUTDOWN_REQUESTED:
         _SHUTDOWN_MESSAGE = _signal_to_message(signum)
         _SHUTDOWN_REQUESTED = True
-        _mark_regression_shutdown()
 
-    if frame is not None and _stack_has_timeout_target(frame):
+    if frame is not None and _frame_in_wrapped_test(frame):
+        raise SimTimeoutError(_get_shutdown_message())
+
+    if not _has_active_test():
         raise SimTimeoutError(_get_shutdown_message())
 
     if frame is not None:
         _enable_timeout_trace(frame)
+        return
+
+    _abort_running_test()
 
 
 def _install_signal_handler(signum):
     if signum is None:
-        return False
+        return
 
     try:
         signal.signal(signum, lambda _signum, _frame: _request_shutdown(_signum, _frame))
     except (AttributeError, OSError, ValueError):
-        return False
-    return True
+        return
+
 
 for _shutdown_signal in (
     getattr(signal, "SIGINT", None),
@@ -134,10 +180,9 @@ for _shutdown_signal in (
 def _wrap_func(original_func):
     @functools.wraps(original_func)
     async def wrapper(dut):
-        _hdl_runner_in_wrapped_test = True
+        _hdl_runner_timeout_wrapper = True
 
         if _SHUTDOWN_REQUESTED:
-            _mark_regression_shutdown()
             raise SimTimeoutError(_get_shutdown_message())
 
         await original_func(dut)
@@ -161,16 +206,13 @@ if COCOTB_2_0_0:
             skip=test.skip,
             stage=test.stage,
         )
+
     for _name, _obj in list(vars(_mod).items()):
         if isinstance(_obj, Test):
             globals()[_name] = _wrap_test(_obj)
         elif isinstance(_obj, Parameterized):
             _obj.test_template = _wrap_test(_obj.test_template)
             globals()[_name] = _obj
-    try:
-        del _name, _obj
-    except NameError:
-        pass
 else:
     for _name, _obj in list(vars(_mod).items()):
         if isinstance(_obj, Test):
@@ -182,7 +224,8 @@ else:
                 skip=_obj.skip,
                 stage=_obj.stage,
             )(_wrap_func(_obj._func))
-    try:
-        del _name, _obj
-    except NameError:
-        pass
+
+try:
+    del _name, _obj
+except NameError:
+    pass
