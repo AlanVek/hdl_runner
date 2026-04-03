@@ -1,5 +1,7 @@
 import os
+import signal
 import shutil
+import time
 import warnings
 import find_libpython
 import sys
@@ -9,6 +11,10 @@ from packaging.version import Version
 import subprocess
 
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
+
+_GRACEFUL_SHUTDOWN_GRACE_PERIOD = 10
+_GRACEFUL_TIMEOUT_SIGNAL = getattr(signal, 'SIGUSR1', signal.SIGINT)
+_GRACEFUL_INTERRUPT_SIGNAL = getattr(signal, 'SIGUSR2', _GRACEFUL_TIMEOUT_SIGNAL)
 
 if COCOTB_2_0_0:
     import cocotb_tools
@@ -126,6 +132,38 @@ class Simulator:
     def _execute_cmds_workaround(self):
         def _execute_cmds(runner, cmds, cwd, stdout = None):
             __tracebackhide__ = True  # Hide the traceback when using PyTest.
+            deadline = None if self.timeout is None else time.monotonic() + self.timeout
+
+            def _request_graceful_shutdown(process, shutdown_signal):
+                if process.poll() is not None:
+                    return
+
+                try:
+                    if os.name == 'posix':
+                        os.killpg(process.pid, shutdown_signal)
+                    else:
+                        process.send_signal(shutdown_signal)
+                except (OSError, ProcessLookupError):
+                    pass
+
+            def _kill_process(process):
+                if process.poll() is not None:
+                    return
+
+                try:
+                    if os.name == 'posix':
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                except (OSError, ProcessLookupError):
+                    pass
+
+            def _wait_for_shutdown(process):
+                try:
+                    process.wait(timeout=_GRACEFUL_SHUTDOWN_GRACE_PERIOD)
+                except subprocess.TimeoutExpired:
+                    _kill_process(process)
+                    process.wait()
 
             for cmd in cmds:
                 if COCOTB_2_0_0:
@@ -133,23 +171,39 @@ class Simulator:
                 else:
                     print(f"INFO: Running command {shlex_join(cmd)} in directory {cwd}")
 
-                kwargs = {}
-                if COCOTB_2_0_0:
-                    kwargs['check'] = True
-
                 # TODO: create a thread to handle stderr and log as error?
                 # TODO: log forwarding
 
                 stderr = None if stdout is None else subprocess.STDOUT
-                process = subprocess.run(
-                    cmd, cwd=cwd, env=runner.env, stdout=stdout, stderr=stderr, timeout=self.timeout, **kwargs
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
+                    env=runner.env,
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=os.name == 'posix',
                 )
+                interrupted = False
+                try:
+                    wait_timeout = None if deadline is None else max(0, deadline - time.monotonic())
+                    process.wait(timeout=wait_timeout)
+                except subprocess.TimeoutExpired:
+                    _request_graceful_shutdown(process, _GRACEFUL_TIMEOUT_SIGNAL)
+                    _wait_for_shutdown(process)
+                except KeyboardInterrupt:
+                    interrupted = True
+                    _request_graceful_shutdown(process, _GRACEFUL_INTERRUPT_SIGNAL)
+                    _wait_for_shutdown(process)
 
-                if not COCOTB_2_0_0:
-                    if process.returncode != 0:
+                if process.returncode != 0:
+                    if COCOTB_2_0_0:
+                        raise subprocess.CalledProcessError(process.returncode, cmd)
+                    else:
                         raise SystemExit(
-                            f"Process {process.args[0]!r} terminated with error {process.returncode}"
+                            f"Process {cmd[0]!r} terminated with error {process.returncode}"
                         )
+                if interrupted:
+                    raise KeyboardInterrupt
 
         self.runner._execute_cmds = _execute_cmds.__get__(self.runner)
 
@@ -189,14 +243,27 @@ class Simulator:
         """
         Run the simulation and handle waveform output and errors.
         """
-        self.timeout = self._timeout
+        # Generate the graceful shutdown wrapper module
+        wrapper_module = 'hdl_runner_timeout_handler'
+        shutil.copy2(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'timeout_handler.py'), os.path.join(self.directory, f'{wrapper_module}.py'))
+        self.extra_env['HDL_RUNNER_TEST_MODULE'] = self.test_module
+        if self._timeout is not None:
+            self.extra_env['HDL_RUNNER_TIMEOUT_DEADLINE'] = str(time.monotonic() + self._timeout)
+            self.timeout = self._timeout
+
+        # Add build dir to PYTHONPATH so the wrapper module can be imported
+        if self.pythonpath is not None:
+            self.pythonpath = os.pathsep.join([self.pythonpath, self.directory])
+        else:
+            self.pythonpath = self.directory
+
         self._pre_run()
 
         err_msg = None
         try:
             self.runner.test(
                 hdl_toplevel    = self.hdl_toplevel,
-                test_module     = self.test_module,
+                test_module     = wrapper_module,
                 timescale       = self.timescale,
                 waves           = self.has_waves,
                 build_dir       = self.directory,
