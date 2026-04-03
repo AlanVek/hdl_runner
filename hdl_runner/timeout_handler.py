@@ -2,7 +2,7 @@ import functools
 import importlib
 import os
 import signal
-import time
+import sys
 from importlib.metadata import version
 
 import cocotb
@@ -12,27 +12,22 @@ COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
 if COCOTB_2_0_0:
     from cocotb._decorators import Parameterized, Test
-    from cocotb.triggers import SimTimeoutError, Timer
+    from cocotb.triggers import SimTimeoutError
 else:
     from cocotb.decorators import test as Test
     from cocotb.result import SimTimeoutError
-    from cocotb.triggers import Timer
-
-_DEADLINE = os.environ.get("HDL_RUNNER_TIMEOUT_DEADLINE")
-if _DEADLINE is not None:
-    _DEADLINE = float(_DEADLINE)
 
 _USER_MODULE = os.environ["HDL_RUNNER_TEST_MODULE"]
-_HAS_DEADLINE_SIGNAL = False
-_TIMEOUT_EXPIRED = _DEADLINE is not None and time.monotonic() >= _DEADLINE
-_USE_POLLING_FALLBACK = False
+_SHUTDOWN_REQUESTED = False
+_SHUTDOWN_MESSAGE = None
 
 
-def _restore_default_handler(signum):
-    try:
-        signal.signal(signum, signal.SIG_DFL)
-    except (AttributeError, OSError, ValueError):
-        pass
+class _ShutdownOutcome:
+    def __init__(self, message):
+        self._message = message
+
+    def get(self):
+        raise SimTimeoutError(self._message)
 
 
 def _signal_to_message(signum):
@@ -44,9 +39,49 @@ def _signal_to_message(signum):
     return "hdl_runner timeout expired"
 
 
-def _raise_shutdown(signum):
-    _restore_default_handler(signum)
-    raise SimTimeoutError(_signal_to_message(signum))
+def _get_shutdown_message():
+    return _SHUTDOWN_MESSAGE or "hdl_runner timeout expired"
+
+
+def _is_test_active():
+    regression_manager = getattr(cocotb, "_regression_manager", None)
+    if regression_manager is None:
+        return False
+
+    running_test = getattr(regression_manager, "_running_test", None)
+    if running_test is None:
+        return False
+
+    return getattr(running_test, "_outcome", None) is None
+
+
+def _frame_has_local(frame, local_name):
+    while frame is not None:
+        if frame.f_locals.get(local_name, False):
+            return True
+        frame = frame.f_back
+    return False
+
+
+def _mark_regression_shutdown():
+    regression_manager = getattr(cocotb, "_regression_manager", None)
+    if regression_manager is None:
+        return
+
+    if getattr(regression_manager, "_sim_failure", None) is None:
+        regression_manager._sim_failure = _ShutdownOutcome(_get_shutdown_message())
+
+
+def _request_shutdown(signum, frame):
+    global _SHUTDOWN_REQUESTED, _SHUTDOWN_MESSAGE
+
+    if _SHUTDOWN_REQUESTED:
+        return
+
+    _SHUTDOWN_MESSAGE = _signal_to_message(signum)
+    _mark_regression_shutdown()
+
+    _SHUTDOWN_REQUESTED = True
 
 
 def _install_signal_handler(signum):
@@ -54,81 +89,45 @@ def _install_signal_handler(signum):
         return False
 
     try:
-        signal.signal(signum, lambda _signum, _frame: _raise_shutdown(_signum))
+        signal.signal(signum, lambda _signum, _frame: _request_shutdown(_signum, _frame))
     except (AttributeError, OSError, ValueError):
         return False
     return True
 
-
-def _should_shutdown():
-    global _TIMEOUT_EXPIRED
-
-    if _TIMEOUT_EXPIRED:
-        return True
-
-    if _DEADLINE is None or not _USE_POLLING_FALLBACK:
-        return False
-
-    if time.monotonic() >= _DEADLINE:
-        _TIMEOUT_EXPIRED = True
-        return True
-
-    return False
-
-
-def _configure_timeout_signal():
-    global _HAS_DEADLINE_SIGNAL, _TIMEOUT_EXPIRED, _USE_POLLING_FALLBACK
-
-    if _DEADLINE is None or _TIMEOUT_EXPIRED:
-        return
-
-    remaining = _DEADLINE - time.monotonic()
-    if remaining <= 0:
-        _TIMEOUT_EXPIRED = True
-        return
-
-    if not hasattr(signal, "setitimer") or not hasattr(signal, "ITIMER_REAL"):
-        _USE_POLLING_FALLBACK = True
-        return
-
-    timeout_signal = getattr(signal, "SIGALRM", None)
-    if timeout_signal is None or not _install_signal_handler(timeout_signal):
-        _USE_POLLING_FALLBACK = True
-        return
-
-    signal.setitimer(signal.ITIMER_REAL, remaining)
-    _HAS_DEADLINE_SIGNAL = True
-
-
 for _shutdown_signal in (
     getattr(signal, "SIGINT", None),
+    getattr(signal, "SIGBREAK", None),
     getattr(signal, "SIGUSR1", None),
     getattr(signal, "SIGUSR2", None),
 ):
     _install_signal_handler(_shutdown_signal)
 
-if _DEADLINE is not None and not hasattr(signal, "setitimer"):
-    _USE_POLLING_FALLBACK = _DEADLINE is not None
-
-_configure_timeout_signal()
-
 
 def _wrap_func(original_func):
+    def _timeout_trace(frame, event, arg):
+        if (
+            _SHUTDOWN_REQUESTED
+            and _is_test_active()
+            and _frame_has_local(frame, "_hdl_runner_in_wrapped_test")
+        ):
+            raise SimTimeoutError(_get_shutdown_message())
+        return _timeout_trace
+
     @functools.wraps(original_func)
     async def wrapper(dut):
-        if _should_shutdown():
-            _raise_shutdown(getattr(signal, "SIGALRM", signal.SIGINT))
+        _hdl_runner_in_wrapped_test = True
 
-        if _USE_POLLING_FALLBACK and not _HAS_DEADLINE_SIGNAL:
-            async def _watchdog():
-                while True:
-                    await Timer(1, "us")
-                    if _should_shutdown():
-                        _raise_shutdown(getattr(signal, "SIGALRM", signal.SIGINT))
+        if _SHUTDOWN_REQUESTED:
+            _mark_regression_shutdown()
+            raise SimTimeoutError(_get_shutdown_message())
 
-            cocotb.start_soon(_watchdog())
+        previous_trace = sys.gettrace()
+        sys.settrace(_timeout_trace)
 
-        await original_func(dut)
+        try:
+            await original_func(dut)
+        finally:
+            sys.settrace(previous_trace)
 
     return wrapper
 

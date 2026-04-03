@@ -13,8 +13,14 @@ import subprocess
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
 _GRACEFUL_SHUTDOWN_GRACE_PERIOD = 10
-_GRACEFUL_TIMEOUT_SIGNAL = getattr(signal, 'SIGUSR1', signal.SIGINT)
-_GRACEFUL_INTERRUPT_SIGNAL = getattr(signal, 'SIGUSR2', _GRACEFUL_TIMEOUT_SIGNAL)
+if os.name == 'nt':
+    _PROCESS_GROUP_CREATION_FLAGS = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    _GRACEFUL_TIMEOUT_SIGNAL = getattr(signal, 'CTRL_BREAK_EVENT', None)
+    _GRACEFUL_INTERRUPT_SIGNAL = getattr(signal, 'CTRL_C_EVENT', _GRACEFUL_TIMEOUT_SIGNAL)
+else:
+    _PROCESS_GROUP_CREATION_FLAGS = 0
+    _GRACEFUL_TIMEOUT_SIGNAL = getattr(signal, 'SIGUSR1', signal.SIGINT)
+    _GRACEFUL_INTERRUPT_SIGNAL = getattr(signal, 'SIGUSR2', _GRACEFUL_TIMEOUT_SIGNAL)
 
 if COCOTB_2_0_0:
     import cocotb_tools
@@ -182,6 +188,7 @@ class Simulator:
                     stdout=stdout,
                     stderr=stderr,
                     start_new_session=os.name == 'posix',
+                    creationflags=_PROCESS_GROUP_CREATION_FLAGS,
                 )
                 interrupted = False
                 try:
@@ -248,7 +255,6 @@ class Simulator:
         shutil.copy2(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'timeout_handler.py'), os.path.join(self.directory, f'{wrapper_module}.py'))
         self.extra_env['HDL_RUNNER_TEST_MODULE'] = self.test_module
         if self._timeout is not None:
-            self.extra_env['HDL_RUNNER_TIMEOUT_DEADLINE'] = str(time.monotonic() + self._timeout)
             self.timeout = self._timeout
 
         # Add build dir to PYTHONPATH so the wrapper module can be imported
