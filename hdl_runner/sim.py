@@ -259,7 +259,7 @@ class Simulator:
 
         # Add build dir to PYTHONPATH so the wrapper module can be imported
         if self.pythonpath is not None:
-            self.pythonpath = os.pathsep.join([self.pythonpath, self.directory])
+            self.pythonpath = os.pathsep.join([str(self.pythonpath), str(self.directory)])
         else:
             self.pythonpath = self.directory
 
