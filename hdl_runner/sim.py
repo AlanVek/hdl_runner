@@ -71,7 +71,8 @@ class Simulator:
         self.random_seed        = random_seed
         self.directory          = directory
         self.timescale          = timescale
-        self.timeout            = timeout
+        self._timeout           = timeout
+        self.timeout            = None
 
         self.test_module        = caller_file
         self.wave_name          = None
@@ -188,6 +189,7 @@ class Simulator:
         """
         Run the simulation and handle waveform output and errors.
         """
+        self.timeout = self._timeout
         self._pre_run()
 
         err_msg = None
@@ -207,6 +209,7 @@ class Simulator:
         except BaseException as e:
             err_msg = str(e)
 
+        self.timeout = None
         if self.wave_name is not None:
             if os.path.isfile(self.wave_name):
                 try:
@@ -313,12 +316,13 @@ class Verilator(Simulator):
 
         if self.has_waves:
             extra_args = ['--trace-structs']
-            self.wave_name = os.path.join(self.directory, f'dump.{self.waveform_format}')
+            # self.wave_name = os.path.join(self.directory, f'dump.{self.waveform_format}')
             if self.waveform_format == 'fst':
                 extra_args.append('--trace-fst')
 
             self.build_args.extend(extra_args)
             self.test_args.extend(extra_args)
+            self.test_args.extend([f'--trace-file', os.path.abspath(self.waveform_file)])
 
 class Ghdl(Simulator):
     """
