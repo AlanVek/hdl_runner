@@ -13,6 +13,9 @@ import subprocess
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
 _GRACEFUL_SHUTDOWN_GRACE_PERIOD = 10
+_MAX_GRACEFUL_SHUTDOWN_GRACE_PERIOD = 60
+
+
 if os.name == 'nt':
     _PROCESS_GROUP_CREATION_FLAGS = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
     _GRACEFUL_TIMEOUT_SIGNAL = getattr(signal, 'CTRL_BREAK_EVENT', None)
@@ -164,9 +167,20 @@ class Simulator:
                 except (OSError, ProcessLookupError):
                     pass
 
-            def _wait_for_shutdown(process):
+            def _wait_for_shutdown(process, process_start_time):
+                graceful_shutdown_grace_period = max(
+                    _GRACEFUL_SHUTDOWN_GRACE_PERIOD,
+                    min(
+                        _MAX_GRACEFUL_SHUTDOWN_GRACE_PERIOD,
+                        time.monotonic() - process_start_time,
+                    ),
+                )
+
+                # Large simulations can spend noticeable wall time unwinding and
+                # flushing buffered state after a graceful stop. Killing them too
+                # early turns a clean timeout into an abnormal exit.
                 try:
-                    process.wait(timeout=_GRACEFUL_SHUTDOWN_GRACE_PERIOD)
+                    process.wait(timeout=graceful_shutdown_grace_period)
                 except subprocess.TimeoutExpired:
                     _kill_process(process)
                     process.wait()
@@ -190,17 +204,18 @@ class Simulator:
                     start_new_session=os.name == 'posix',
                     creationflags=_PROCESS_GROUP_CREATION_FLAGS,
                 )
+                process_start_time = time.monotonic()
                 interrupted = False
                 try:
                     wait_timeout = None if deadline is None else max(0, deadline - time.monotonic())
                     process.wait(timeout=wait_timeout)
                 except subprocess.TimeoutExpired:
                     _request_graceful_shutdown(process, _GRACEFUL_TIMEOUT_SIGNAL)
-                    _wait_for_shutdown(process)
+                    _wait_for_shutdown(process, process_start_time)
                 except KeyboardInterrupt:
                     interrupted = True
                     _request_graceful_shutdown(process, _GRACEFUL_INTERRUPT_SIGNAL)
-                    _wait_for_shutdown(process)
+                    _wait_for_shutdown(process, process_start_time)
 
                 if process.returncode != 0:
                     if COCOTB_2_0_0:
@@ -209,8 +224,8 @@ class Simulator:
                         raise SystemExit(
                             f"Process {cmd[0]!r} terminated with error {process.returncode}"
                         )
-                if interrupted:
-                    raise KeyboardInterrupt
+                if interrupted and os.getenv("PYTEST_CURRENT_TEST") is None:
+                    raise SystemExit("hdl_runner interrupted by ctrl+C")
 
         self.runner._execute_cmds = _execute_cmds.__get__(self.runner)
 

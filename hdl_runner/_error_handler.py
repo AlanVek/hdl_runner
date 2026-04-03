@@ -7,6 +7,7 @@ from importlib.metadata import version
 
 import cocotb
 from packaging.version import Version
+from cocotb.task import Task as CocotbTask
 
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
@@ -24,6 +25,8 @@ _USER_MODULE = os.environ["HDL_RUNNER_TEST_MODULE"]
 _SHUTDOWN_REQUESTED = False
 _SHUTDOWN_MESSAGE = None
 _TRACE_INSTALLED = False
+_ABORT_TRACE_INSTALLED = False
+_ABORT_PENDING = False
 
 
 def _signal_to_message(signum):
@@ -59,10 +62,70 @@ def _frame_in_wrapped_test(frame):
     return False
 
 
+def _get_main_test_task():
+    regression_manager = _get_regression_manager()
+    if regression_manager is None:
+        return None
+
+    if COCOTB_2_0_0:
+        running_test = getattr(regression_manager, "_running_test", None)
+        if running_test is None:
+            return None
+        return getattr(running_test, "_main_task", None)
+
+    return getattr(regression_manager, "_test_task", None)
+
+
+def _iter_coro_frames(coro, seen=None):
+    if seen is None:
+        seen = set()
+
+    while coro is not None and id(coro) not in seen:
+        seen.add(id(coro))
+
+        frame = getattr(coro, "cr_frame", None)
+        if frame is None:
+            frame = getattr(coro, "gi_frame", None)
+        if frame is not None:
+            yield frame
+
+        next_coro = getattr(coro, "cr_await", None)
+        if next_coro is None:
+            next_coro = getattr(coro, "gi_yieldfrom", None)
+        coro = next_coro
+
+
 def _timeout_trace(frame, event, arg):
     if _SHUTDOWN_REQUESTED and _frame_in_wrapped_test(frame):
         raise SimTimeoutError(_get_shutdown_message())
     return _timeout_trace
+
+
+def _abort_trace(frame, event, arg):
+    global _ABORT_PENDING
+
+    if _ABORT_PENDING:
+        _ABORT_PENDING = False
+        _abort_running_test()
+
+    return _abort_trace
+
+
+def _install_trace_on_task(task, seen_coros):
+    coro = getattr(task, "_coro", None)
+    if coro is None:
+        return False
+
+    installed = False
+    for task_frame in _iter_coro_frames(coro, seen_coros):
+        task_frame.f_trace = _timeout_trace
+        installed = True
+
+        for value in task_frame.f_locals.values():
+            if isinstance(value, CocotbTask):
+                installed = _install_trace_on_task(value, seen_coros) or installed
+
+    return installed
 
 
 def _enable_timeout_trace(frame):
@@ -72,8 +135,28 @@ def _enable_timeout_trace(frame):
         sys.settrace(_timeout_trace)
         _TRACE_INSTALLED = True
 
+    test_task = _get_main_test_task()
+    if test_task is not None:
+        installed = _install_trace_on_task(test_task, set())
+        if installed:
+            return
+
     while frame is not None:
         frame.f_trace = _timeout_trace
+        frame = frame.f_back
+
+
+def _enable_abort_trace(frame):
+    global _ABORT_TRACE_INSTALLED, _ABORT_PENDING
+
+    if not _ABORT_TRACE_INSTALLED:
+        sys.settrace(_abort_trace)
+        _ABORT_TRACE_INSTALLED = True
+
+    _ABORT_PENDING = True
+
+    while frame is not None:
+        frame.f_trace = _abort_trace
         frame = frame.f_back
 
 
@@ -151,12 +234,12 @@ def _request_shutdown(signum, frame):
     if not _has_active_test():
         raise SimTimeoutError(_get_shutdown_message())
 
-    if frame is not None:
+    if frame is None:
+        _abort_running_test()
+    elif COCOTB_2_0_0:
         _enable_timeout_trace(frame)
-        return
-
-    _abort_running_test()
-
+    else:
+        _enable_abort_trace(frame)
 
 def _install_signal_handler(signum):
     if signum is None:
