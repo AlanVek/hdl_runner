@@ -210,14 +210,14 @@ class Simulator:
             err_msg = str(e)
 
         self.timeout = None
-        if self.wave_name is not None:
-            if os.path.isfile(self.wave_name):
-                try:
-                    shutil.copy2(self.wave_name, self.waveform_file)
-                except shutil.SameFileError:
-                    pass
-            else:
-                warnings.warn(f"Failed to find waveform output file: {self.wave_name}", stacklevel=2)
+        if self.wave_name is not None and os.path.isfile(self.wave_name):
+            try:
+                shutil.copy2(self.wave_name, self.waveform_file)
+            except shutil.SameFileError:
+                pass
+
+        if self.waveform_file is not None and not os.path.isfile(self.waveform_file):
+            warnings.warn(f"Failed to find waveform output file: {self.waveform_file}", stacklevel=2)
 
         if err_msg is not None:
             raise RuntimeError(f"Test failed: {err_msg}")
@@ -316,7 +316,7 @@ class Verilator(Simulator):
 
         if self.has_waves:
             extra_args = ['--trace-structs']
-            # self.wave_name = os.path.join(self.directory, f'dump.{self.waveform_format}')
+            self.wave_name = os.path.join(self.directory, f'dump.{self.waveform_format}')
             if self.waveform_format == 'fst':
                 extra_args.append('--trace-fst')
 
