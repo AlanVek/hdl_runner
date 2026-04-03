@@ -313,12 +313,12 @@ class Verilator(Simulator):
 
         if self.has_waves:
             extra_args = ['--trace-structs']
+            self.wave_name = os.path.join(self.directory, f'dump.{self.waveform_format}')
             if self.waveform_format == 'fst':
                 extra_args.append('--trace-fst')
 
             self.build_args.extend(extra_args)
             self.test_args.extend(extra_args)
-            self.test_args.extend(['--trace-file', os.path.abspath(self.waveform_file)])
 
 class Ghdl(Simulator):
     """
