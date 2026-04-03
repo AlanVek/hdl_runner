@@ -251,8 +251,8 @@ class Simulator:
         Run the simulation and handle waveform output and errors.
         """
         # Generate the graceful shutdown wrapper module
-        wrapper_module = '_hdl_runner_timeout_handler'
-        shutil.copy2(os.path.join(os.path.dirname(os.path.abspath(__file__)), '_timeout_handler.py'), os.path.join(self.directory, f'{wrapper_module}.py'))
+        wrapper_module = '_hdl_runner_error_handler'
+        shutil.copy2(os.path.join(os.path.dirname(os.path.abspath(__file__)), '_error_handler.py'), os.path.join(self.directory, f'{wrapper_module}.py'))
         self.extra_env['HDL_RUNNER_TEST_MODULE'] = self.test_module
         if self._timeout is not None:
             self.timeout = self._timeout
