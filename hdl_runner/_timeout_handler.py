@@ -44,11 +44,19 @@ def _get_shutdown_message():
 
 
 def _is_test_active():
-    regression_manager = getattr(cocotb, "_regression_manager", None)
+    regression_manager = getattr(
+        cocotb,
+        "_regression_manager" if COCOTB_2_0_0 else "regression_manager",
+        None,
+    )
     if regression_manager is None:
         return False
 
-    running_test = getattr(regression_manager, "_running_test", None)
+    running_test = getattr(
+        regression_manager,
+        "_running_test" if COCOTB_2_0_0 else '_test_task',
+        None,
+    )
     if running_test is None:
         return False
 
@@ -64,12 +72,17 @@ def _frame_has_local(frame, local_name):
 
 
 def _mark_regression_shutdown():
-    regression_manager = getattr(cocotb, "_regression_manager", None)
+    regression_manager = getattr(
+        cocotb,
+        "_regression_manager" if COCOTB_2_0_0 else "regression_manager",
+        None,
+    )
     if regression_manager is None:
         return
 
-    if getattr(regression_manager, "_sim_failure", None) is None:
-        regression_manager._sim_failure = _ShutdownOutcome(_get_shutdown_message())
+    if COCOTB_2_0_0:
+        if getattr(regression_manager, "_sim_failure", None) is None:
+            regression_manager._sim_failure = _ShutdownOutcome(_get_shutdown_message())
 
 
 def _request_shutdown(signum, frame):
