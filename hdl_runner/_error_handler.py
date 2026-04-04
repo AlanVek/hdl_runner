@@ -7,14 +7,16 @@ import cocotb
 from cocotb.task import Task as CocotbTask
 
 try:
+    # Cocotb 2.0.1
     from cocotb._decorators import Parameterized, Test
     from cocotb.triggers import SimTimeoutError
     from cocotb.logging import SimLogFormatter
 except ImportError:
+    # Cocotb 1.9.2
     from cocotb.decorators import test as Test
     from cocotb.result import SimTimeoutError
     from cocotb.log import SimLogFormatter
-    Parameterized = None
+    Parameterized = ()
 
 _USER_MODULE = os.environ["HDL_RUNNER_TEST_MODULE"]
 _SHUTDOWN_REQUESTED = False
@@ -138,7 +140,7 @@ for _shutdown_signal in (
 def _wrap_func(original_func):
     @functools.wraps(original_func)
     async def wrapper(*args, **kwargs):
-        _hdl_runner_timeout_wrapper = True
+        _hdl_runner_timeout_wrapper = True  # Do not touch, used by _frame_in_wrapped_test
 
         if _SHUTDOWN_REQUESTED:
             raise SimTimeoutError(_SHUTDOWN_MESSAGE)
@@ -165,8 +167,3 @@ for _name, _obj in list(vars(_mod).items()):
     elif Parameterized and isinstance(_obj, Parameterized):
         _wrap_test(_obj.test_template)
         globals()[_name] = _obj
-
-try:
-    del _name, _obj
-except NameError:
-    pass
