@@ -141,13 +141,13 @@ class Simulator:
             __tracebackhide__ = True  # Hide the traceback when using PyTest.
             deadline = None if self.timeout is None else time.monotonic() + self.timeout
 
-            def _send_signal(process: subprocess.Popen, signal: int):
-                if signal is not None and process.poll() is None:
+            def _send_signal(process: subprocess.Popen, signum: int):
+                if signum is not None and process.poll() is None:
                     try:
                         if os.name == 'posix':
-                            os.killpg(process.pid, signal)
+                            os.killpg(process.pid, signum)
                         else:
-                            process.send_signal(signal)
+                            process.send_signal(signum)
                     except (OSError, ProcessLookupError):
                         pass
 
@@ -198,6 +198,7 @@ class Simulator:
                         _request_graceful_shutdown(process, _GRACEFUL_TIMEOUT_SIGNAL)
                     except KeyboardInterrupt:
                         _request_graceful_shutdown(process, _GRACEFUL_INTERRUPT_SIGNAL)
+                        raise
 
                     if process.returncode != 0:
                         if COCOTB_2_0_0:

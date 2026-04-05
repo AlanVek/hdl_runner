@@ -2,20 +2,14 @@ import functools
 import importlib
 import os
 import signal
-import sys
-import cocotb
-from cocotb.task import Task as CocotbTask
+import types
 
 try:
     # Cocotb 2.0.1
     from cocotb._decorators import Parameterized, Test
-    from cocotb.triggers import SimTimeoutError
-    from cocotb.logging import SimLogFormatter
 except ImportError:
     # Cocotb 1.9.2
     from cocotb.decorators import test as Test
-    from cocotb.result import SimTimeoutError
-    from cocotb.log import SimLogFormatter
     Parameterized = ()
 
 _USER_MODULE = os.getenv("HDL_RUNNER_TEST_MODULE", None)
@@ -23,89 +17,17 @@ if _USER_MODULE is None:
     raise RuntimeError("Missing HDL_RUNNER_TEST_MODULE definition")
 
 _SHUTDOWN_REQUESTED = False
-_SHUTDOWN_MESSAGE = "hdl_runner timeout expired"
-_TRACE_ENABLED = False
-_TRACE_FRAME_IDS = set()
+_SHUTDOWN_MESSAGE = "hdl_runner internal error"
 
-_original_format_exception = SimLogFormatter.formatException
-
-def _patched_format_exception(self, exc_info):
-    _, exc, _ = exc_info
-    if isinstance(exc, SimTimeoutError):
-        exc_name = f"{type(exc).__module__}.{type(exc).__qualname__}"
-        return exc_name if str(exc) == "" else f"{exc_name}: {exc}"
-
-    return _original_format_exception(self, exc_info)
-
-SimLogFormatter.formatException = _patched_format_exception
+class HDLRunnerError(Exception):
+    pass
 
 def _frame_in_wrapped_test(frame):
     while frame is not None:
         if frame.f_locals.get("_hdl_runner_timeout_wrapper", False):
             return True
         frame = frame.f_back
-
     return False
-
-def _get_main_test_task():
-    regression_manager = getattr(cocotb, "_regression_manager", None) or getattr(cocotb, "regression_manager", None)
-    if regression_manager is None:
-        return None
-
-    running_test = getattr(regression_manager, "_running_test", None)
-    if running_test is not None:
-        return getattr(running_test, "_main_task", None)
-
-    return getattr(regression_manager, "_test_task", None)
-
-def _iter_coro_frames(coro):
-    seen = set()
-
-    while coro is not None and id(coro) not in seen:
-        seen.add(id(coro))
-
-        frame = getattr(coro, "cr_frame", None) or getattr(coro, "gi_frame", None)
-        if frame is not None:
-            yield frame
-
-        coro = getattr(coro, "cr_await", None) or getattr(coro, "gi_yieldfrom", None)
-
-def _trace_task(task, seen_tasks=None):
-    if seen_tasks is None:
-        seen_tasks = set()
-
-    if id(task) in seen_tasks:
-        return
-    seen_tasks.add(id(task))
-
-    coro = getattr(task, "_coro", None)
-    if coro is None:
-        return
-
-    for frame in _iter_coro_frames(coro):
-        _TRACE_FRAME_IDS.add(id(frame))
-        frame.f_trace = _timeout_trace
-
-        for value in frame.f_locals.values():
-            if isinstance(value, CocotbTask):
-                _trace_task(value, seen_tasks)
-
-def _enable_timeout_trace():
-    global _TRACE_ENABLED
-
-    if not _TRACE_ENABLED:
-        sys.settrace(_timeout_trace)
-        _TRACE_ENABLED = True
-
-    main_test_task = _get_main_test_task()
-    if main_test_task is not None:
-        _trace_task(main_test_task)
-
-def _timeout_trace(frame, event, arg):
-    if id(frame) in _TRACE_FRAME_IDS:
-        raise SimTimeoutError(_SHUTDOWN_MESSAGE)
-
-    return _timeout_trace
 
 def _request_shutdown(signum, frame):
     global _SHUTDOWN_REQUESTED, _SHUTDOWN_MESSAGE
@@ -121,9 +43,8 @@ def _request_shutdown(signum, frame):
             _SHUTDOWN_MESSAGE = "hdl_runner timeout expired"
 
     if frame is not None and _frame_in_wrapped_test(frame):
-        raise SimTimeoutError(_SHUTDOWN_MESSAGE)
-
-    _enable_timeout_trace()
+        raise HDLRunnerError(_SHUTDOWN_MESSAGE)
+    # _drive_coro handles injection when the coroutine is suspended at await
 
 def _install_signal_handler(signum):
     if signum is not None:
@@ -140,15 +61,28 @@ for _shutdown_signal in (
 ):
     _install_signal_handler(_shutdown_signal)
 
+@types.coroutine
+def _drive_coro(coro):
+    value = None
+    while True:
+        if _SHUTDOWN_REQUESTED:
+            coro.close()
+            raise HDLRunnerError(_SHUTDOWN_MESSAGE)
+        try:
+            yielded = coro.send(value)
+        except StopIteration as e:
+            return e.value
+        try:
+            value = yield yielded
+        except BaseException:
+            coro.close()
+            raise
+
 def _wrap_func(original_func):
     @functools.wraps(original_func)
     async def wrapper(*args, **kwargs):
         _hdl_runner_timeout_wrapper = True  # Do not touch, used by _frame_in_wrapped_test
-
-        if _SHUTDOWN_REQUESTED:
-            raise SimTimeoutError(_SHUTDOWN_MESSAGE)
-
-        return await original_func(*args, **kwargs)
+        return await _drive_coro(original_func(*args, **kwargs))
 
     return wrapper
 
