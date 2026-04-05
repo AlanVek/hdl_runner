@@ -12,9 +12,7 @@ import subprocess
 
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
 
-_GRACEFUL_SHUTDOWN_GRACE_PERIOD = 10
-_MAX_GRACEFUL_SHUTDOWN_GRACE_PERIOD = 60
-
+_SHUTDOWN_GRACE_PERIOD = 10
 
 if os.name == 'nt':
     _PROCESS_GROUP_CREATION_FLAGS = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
@@ -143,48 +141,38 @@ class Simulator:
             __tracebackhide__ = True  # Hide the traceback when using PyTest.
             deadline = None if self.timeout is None else time.monotonic() + self.timeout
 
-            def _request_graceful_shutdown(process, shutdown_signal):
-                if process.poll() is not None:
-                    return
+            def _send_signal(process: subprocess.Popen, signal: int):
+                if signal is not None and process.poll() is None:
+                    try:
+                        if os.name == 'posix':
+                            os.killpg(process.pid, signal)
+                        else:
+                            process.send_signal(signal)
+                    except (OSError, ProcessLookupError):
+                        pass
 
-                try:
-                    if os.name == 'posix':
-                        os.killpg(process.pid, shutdown_signal)
-                    else:
-                        process.send_signal(shutdown_signal)
-                except (OSError, ProcessLookupError):
-                    pass
+            def _kill_process(process: subprocess.Popen):
+                warnings.warn(f"Failed to gracefully terminate process {process.pid}, defaulting to hard kill", stacklevel=2)
+                _send_signal(signal.SIGKILL)
 
-            def _kill_process(process):
-                if process.poll() is not None:
-                    return
-
-                try:
-                    if os.name == 'posix':
-                        os.killpg(process.pid, signal.SIGKILL)
-                    else:
-                        process.kill()
-                except (OSError, ProcessLookupError):
-                    pass
-
-            def _wait_for_shutdown(process, process_start_time):
-                graceful_shutdown_grace_period = max(
-                    _GRACEFUL_SHUTDOWN_GRACE_PERIOD,
-                    min(
-                        _MAX_GRACEFUL_SHUTDOWN_GRACE_PERIOD,
-                        time.monotonic() - process_start_time,
-                    ),
-                )
-
+            def _wait_for_shutdown(process: subprocess.Popen):
                 # Large simulations can spend noticeable wall time unwinding and
                 # flushing buffered state after a graceful stop. Killing them too
                 # early turns a clean timeout into an abnormal exit.
                 try:
-                    process.wait(timeout=graceful_shutdown_grace_period)
+                    process.wait(timeout=_SHUTDOWN_GRACE_PERIOD)
                 except subprocess.TimeoutExpired:
                     _kill_process(process)
                     process.wait()
 
+            def _request_graceful_shutdown(process: subprocess.Popen, shutdown_signal: int):
+                if shutdown_signal is None:
+                    _kill_process(process)
+                else:
+                    _send_signal(process, shutdown_signal)
+                _wait_for_shutdown(process)
+
+            stderr = None if stdout is None else subprocess.STDOUT
             for cmd in cmds:
                 if COCOTB_2_0_0:
                     runner.log.info("Running command %s in directory %s", _shlex_join(cmd), cwd)
@@ -194,38 +182,24 @@ class Simulator:
                 # TODO: create a thread to handle stderr and log as error?
                 # TODO: log forwarding
 
-                stderr = None if stdout is None else subprocess.STDOUT
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=cwd,
-                    env=runner.env,
-                    stdout=stdout,
-                    stderr=stderr,
-                    start_new_session=os.name == 'posix',
-                    creationflags=_PROCESS_GROUP_CREATION_FLAGS,
-                )
-                process_start_time = time.monotonic()
-                interrupted = False
-                try:
-                    wait_timeout = None if deadline is None else max(0, deadline - time.monotonic())
-                    process.wait(timeout=wait_timeout)
-                except subprocess.TimeoutExpired:
-                    _request_graceful_shutdown(process, _GRACEFUL_TIMEOUT_SIGNAL)
-                    _wait_for_shutdown(process, process_start_time)
-                except KeyboardInterrupt:
-                    interrupted = True
-                    _request_graceful_shutdown(process, _GRACEFUL_INTERRUPT_SIGNAL)
-                    _wait_for_shutdown(process, process_start_time)
+                with subprocess.Popen(
+                    cmd, cwd=cwd, env=runner.env, stdout=stdout, stderr=stderr, start_new_session=os.name == 'posix', creationflags=_PROCESS_GROUP_CREATION_FLAGS,
+                ) as process:
+                    try:
+                        wait_timeout = None if deadline is None else max(0, deadline - time.monotonic())
+                        process.wait(timeout=wait_timeout)
+                    except subprocess.TimeoutExpired:
+                        _request_graceful_shutdown(process, _GRACEFUL_TIMEOUT_SIGNAL)
+                    except KeyboardInterrupt:
+                        _request_graceful_shutdown(process, _GRACEFUL_INTERRUPT_SIGNAL)
 
-                if process.returncode != 0:
-                    if COCOTB_2_0_0:
-                        raise subprocess.CalledProcessError(process.returncode, cmd)
-                    else:
-                        raise SystemExit(
-                            f"Process {cmd[0]!r} terminated with error {process.returncode}"
-                        )
-                if interrupted and os.getenv("PYTEST_CURRENT_TEST") is None:
-                    raise SystemExit("hdl_runner interrupted by ctrl+C")
+                    if process.returncode != 0:
+                        if COCOTB_2_0_0:
+                            raise subprocess.CalledProcessError(process.returncode, cmd)
+                        else:
+                            raise SystemExit(
+                                f"Process {process.args[0]!r} terminated with error {process.returncode}"
+                            )
 
         self.runner._execute_cmds = _execute_cmds.__get__(self.runner)
 
@@ -265,26 +239,15 @@ class Simulator:
         """
         Run the simulation and handle waveform output and errors.
         """
-        # Generate the graceful shutdown wrapper module
-        wrapper_module = '_hdl_runner_error_handler'
-        shutil.copy2(os.path.join(os.path.dirname(os.path.abspath(__file__)), '_error_handler.py'), os.path.join(self.directory, f'{wrapper_module}.py'))
         self.extra_env['HDL_RUNNER_TEST_MODULE'] = self.test_module
-        if self._timeout is not None:
-            self.timeout = self._timeout
-
-        # Add build dir to PYTHONPATH so the wrapper module can be imported
-        if self.pythonpath is not None:
-            self.pythonpath = os.pathsep.join([str(self.pythonpath), str(self.directory)])
-        else:
-            self.pythonpath = self.directory
-
+        self.timeout = self._timeout
         self._pre_run()
 
         err_msg = None
         try:
             self.runner.test(
                 hdl_toplevel    = self.hdl_toplevel,
-                test_module     = wrapper_module,
+                test_module     = 'hdl_runner._error_handler',
                 timescale       = self.timescale,
                 waves           = self.has_waves,
                 build_dir       = self.directory,

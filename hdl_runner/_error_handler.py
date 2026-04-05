@@ -18,7 +18,10 @@ except ImportError:
     from cocotb.log import SimLogFormatter
     Parameterized = ()
 
-_USER_MODULE = os.environ["HDL_RUNNER_TEST_MODULE"]
+_USER_MODULE = os.getenv("HDL_RUNNER_TEST_MODULE", None)
+if _USER_MODULE is None:
+    raise RuntimeError("Missing HDL_RUNNER_TEST_MODULE definition")
+
 _SHUTDOWN_REQUESTED = False
 _SHUTDOWN_MESSAGE = "hdl_runner timeout expired"
 _TRACE_ENABLED = False
