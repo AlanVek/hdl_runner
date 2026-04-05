@@ -1,7 +1,7 @@
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 from cocotb.clock import Clock
-from hdl_runner.runner import run
+from hdl_runner import run
 import os
 from random import getrandbits
 import pytest

@@ -1,7 +1,7 @@
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 from cocotb.clock import Clock
-from hdl_runner.runner import run
+from hdl_runner import run
 import os
 from random import getrandbits
 import pytest
@@ -44,7 +44,7 @@ def test(width, backend):
     from glob import glob
 
     run(
-        waveform_file = 'adder_nvc.fst',
+        waveform_file = 'adder_nvc_vhdl.fst',
         toplevel = 'Adder',
         vhdl_sources = glob(os.path.join(os.path.dirname(os.path.dirname(__file__)), '*.vhd')),
         parameters = {'size': width},
