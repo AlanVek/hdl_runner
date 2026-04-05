@@ -1,3 +1,25 @@
+from amaranth import *
+
+class Adder(Elaboratable):
+    def __init__(self, width, domain = 'sync'):
+        if not isinstance(width, int) or width <= 0:
+            raise ValueError(f"Invalid argument for 'width': {width}")
+
+        self.width  = width
+        self.domain = domain
+
+        self.a      = Signal(width)
+        self.b      = Signal(width)
+        self.o      = Signal(width + 1)
+
+    def elaborate(self, platform):
+        m = Module()
+        sync = m.d[self.domain]
+
+        sync += self.o.eq(self.a + self.b)
+
+        return m
+
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 from cocotb.clock import Clock
@@ -39,18 +61,16 @@ async def adder_test(dut):
         last = a + b
 
 @pytest.mark.parametrize('width', [1, 2, 4, 8])
-@pytest.mark.parametrize('backend', ['celosia', 'amaranth'])
+@pytest.mark.parametrize('backend', ['celosia'])
 def test(width, backend):
-    from glob import glob
-
+    adder = Adder(width, domain = 'sync')
     run(
-        waveform_file = 'adder_ghdl_vhdl.vcd',
-        toplevel = 'Adder',
-        vhdl_sources = glob(os.path.join(os.path.dirname(os.path.dirname(__file__)), '*.vhd')),
-        parameters = {'size': width},
-        simulator = 'ghdl',
+        adder,
+        ports = [adder.a, adder.b, adder.o],
+        waveform_file = 'adder_nvc_amaranth.fst',
+        simulator='nvc',
         backend = backend,
     )
 
 if __name__ == '__main__':
-    test(8, 'amaranth')
+    test(8, 'celosia')
