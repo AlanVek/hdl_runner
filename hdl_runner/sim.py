@@ -254,7 +254,7 @@ class Simulator:
         try:
             self.runner.test(
                 hdl_toplevel    = self.hdl_toplevel,
-                test_module     = 'hdl_runner._error_handler',
+                test_module     = 'hdl_runner._test_wrapper',
                 timescale       = self.timescale,
                 waves           = self.has_waves,
                 build_dir       = self.directory,
