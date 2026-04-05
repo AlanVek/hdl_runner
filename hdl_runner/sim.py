@@ -1,5 +1,7 @@
 import os
+import signal
 import shutil
+import time
 import warnings
 import find_libpython
 import sys
@@ -9,6 +11,17 @@ from packaging.version import Version
 import subprocess
 
 COCOTB_2_0_0 = Version(version("cocotb")) >= Version("2.0.0")
+
+_SHUTDOWN_GRACE_PERIOD = 10
+
+if os.name == 'nt':
+    _PROCESS_GROUP_CREATION_FLAGS = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    _GRACEFUL_TIMEOUT_SIGNAL = getattr(signal, 'CTRL_BREAK_EVENT', None)
+    _GRACEFUL_INTERRUPT_SIGNAL = getattr(signal, 'CTRL_C_EVENT', _GRACEFUL_TIMEOUT_SIGNAL)
+else:
+    _PROCESS_GROUP_CREATION_FLAGS = 0
+    _GRACEFUL_TIMEOUT_SIGNAL = getattr(signal, 'SIGUSR1', signal.SIGINT)
+    _GRACEFUL_INTERRUPT_SIGNAL = getattr(signal, 'SIGUSR2', _GRACEFUL_TIMEOUT_SIGNAL)
 
 if COCOTB_2_0_0:
     import cocotb_tools
@@ -126,30 +139,74 @@ class Simulator:
     def _execute_cmds_workaround(self):
         def _execute_cmds(runner, cmds, cwd, stdout = None):
             __tracebackhide__ = True  # Hide the traceback when using PyTest.
+            deadline = None if self.timeout is None else time.monotonic() + self.timeout
 
+            def _send_signal(process: subprocess.Popen, signum: int):
+                if signum is not None and process.poll() is None:
+                    try:
+                        if os.name == 'posix':
+                            os.killpg(process.pid, signum)
+                        else:
+                            process.send_signal(signum)
+                    except (OSError, ProcessLookupError):
+                        pass
+
+            def _kill_process(process: subprocess.Popen):
+                warnings.warn(f"Failed to gracefully terminate process {process.pid}, defaulting to hard kill", stacklevel=2)
+                if os.name == 'posix':
+                    _send_signal(process, signal.SIGKILL)
+                else:
+                    try:
+                        process.kill()
+                    except (OSError, ProcessLookupError):
+                        pass
+
+            def _wait_for_shutdown(process: subprocess.Popen):
+                # Large simulations can spend noticeable wall time unwinding and
+                # flushing buffered state after a graceful stop. Killing them too
+                # early turns a clean timeout into an abnormal exit.
+                try:
+                    process.wait(timeout=_SHUTDOWN_GRACE_PERIOD)
+                except subprocess.TimeoutExpired:
+                    _kill_process(process)
+                    process.wait()
+
+            def _request_graceful_shutdown(process: subprocess.Popen, shutdown_signal: int):
+                if shutdown_signal is None:
+                    _kill_process(process)
+                else:
+                    _send_signal(process, shutdown_signal)
+                _wait_for_shutdown(process)
+
+            stderr = None if stdout is None else subprocess.STDOUT
             for cmd in cmds:
                 if COCOTB_2_0_0:
                     runner.log.info("Running command %s in directory %s", _shlex_join(cmd), cwd)
                 else:
                     print(f"INFO: Running command {shlex_join(cmd)} in directory {cwd}")
 
-                kwargs = {}
-                if COCOTB_2_0_0:
-                    kwargs['check'] = True
-
                 # TODO: create a thread to handle stderr and log as error?
                 # TODO: log forwarding
 
-                stderr = None if stdout is None else subprocess.STDOUT
-                process = subprocess.run(
-                    cmd, cwd=cwd, env=runner.env, stdout=stdout, stderr=stderr, timeout=self.timeout, **kwargs
-                )
+                with subprocess.Popen(
+                    cmd, cwd=cwd, env=runner.env, stdout=stdout, stderr=stderr, start_new_session=os.name == 'posix', creationflags=_PROCESS_GROUP_CREATION_FLAGS,
+                ) as process:
+                    try:
+                        wait_timeout = None if deadline is None else max(0, deadline - time.monotonic())
+                        process.wait(timeout=wait_timeout)
+                    except subprocess.TimeoutExpired:
+                        _request_graceful_shutdown(process, _GRACEFUL_TIMEOUT_SIGNAL)
+                    except KeyboardInterrupt:
+                        _request_graceful_shutdown(process, _GRACEFUL_INTERRUPT_SIGNAL)
+                        raise
 
-                if not COCOTB_2_0_0:
                     if process.returncode != 0:
-                        raise SystemExit(
-                            f"Process {process.args[0]!r} terminated with error {process.returncode}"
-                        )
+                        if COCOTB_2_0_0:
+                            raise subprocess.CalledProcessError(process.returncode, cmd)
+                        else:
+                            raise SystemExit(
+                                f"Process {process.args[0]!r} terminated with error {process.returncode}"
+                            )
 
         self.runner._execute_cmds = _execute_cmds.__get__(self.runner)
 
@@ -189,14 +246,16 @@ class Simulator:
         """
         Run the simulation and handle waveform output and errors.
         """
+        __tracebackhide__ = True  # Hide the traceback when using PyTest.
+        self.extra_env['HDL_RUNNER_TEST_MODULE'] = self.test_module
         self.timeout = self._timeout
         self._pre_run()
 
-        err_msg = None
+        err = None
         try:
             self.runner.test(
                 hdl_toplevel    = self.hdl_toplevel,
-                test_module     = self.test_module,
+                test_module     = 'hdl_runner._test_wrapper',
                 timescale       = self.timescale,
                 waves           = self.has_waves,
                 build_dir       = self.directory,
@@ -207,7 +266,7 @@ class Simulator:
                 extra_env       = self.extra_env,
             )
         except BaseException as e:
-            err_msg = str(e)
+            err = e
 
         self.timeout = None
         if self.wave_name is not None and os.path.isfile(self.wave_name):
@@ -219,13 +278,14 @@ class Simulator:
         if self.waveform_file is not None and not os.path.isfile(self.waveform_file):
             warnings.warn(f"Failed to find waveform output file: {self.waveform_file}", stacklevel=2)
 
-        if err_msg is not None:
-            raise RuntimeError(f"Test failed: {err_msg}")
+        if err is not None:
+            raise err.with_traceback(err.__traceback__)
 
     def build_and_run(self):
         """
         Build and run the simulation in sequence.
         """
+        __tracebackhide__ = True  # Hide the traceback when using PyTest.
         self.build()
         self.run()
 

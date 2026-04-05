@@ -244,6 +244,7 @@ def run(
         extra_args: list with extra compilation arguments
         backend: string with backend name (e.g. amaranth, celosia)
     """
+    __tracebackhide__ = True  # Hide the traceback when using PyTest.
 
     if toplevel is None:
         toplevel = module_name = 'top'
