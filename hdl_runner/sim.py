@@ -278,7 +278,7 @@ class Simulator:
             warnings.warn(f"Failed to find waveform output file: {self.waveform_file}", stacklevel=2)
 
         if err is not None:
-            raise err
+            raise err.with_traceback(err.__traceback__)
 
     def build_and_run(self):
         """
