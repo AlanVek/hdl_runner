@@ -153,7 +153,13 @@ class Simulator:
 
             def _kill_process(process: subprocess.Popen):
                 warnings.warn(f"Failed to gracefully terminate process {process.pid}, defaulting to hard kill", stacklevel=2)
-                _send_signal(signal.SIGKILL)
+                if os.name == 'posix':
+                    _send_signal(process, signal.SIGKILL)
+                else:
+                    try:
+                        process.kill()
+                    except (OSError, ProcessLookupError):
+                        pass
 
             def _wait_for_shutdown(process: subprocess.Popen):
                 # Large simulations can spend noticeable wall time unwinding and
@@ -239,11 +245,12 @@ class Simulator:
         """
         Run the simulation and handle waveform output and errors.
         """
+        __tracebackhide__ = True  # Hide the traceback when using PyTest.
         self.extra_env['HDL_RUNNER_TEST_MODULE'] = self.test_module
         self.timeout = self._timeout
         self._pre_run()
 
-        err_msg = None
+        err = None
         try:
             self.runner.test(
                 hdl_toplevel    = self.hdl_toplevel,
@@ -258,7 +265,7 @@ class Simulator:
                 extra_env       = self.extra_env,
             )
         except BaseException as e:
-            err_msg = str(e)
+            err = e
 
         self.timeout = None
         if self.wave_name is not None and os.path.isfile(self.wave_name):
@@ -270,13 +277,14 @@ class Simulator:
         if self.waveform_file is not None and not os.path.isfile(self.waveform_file):
             warnings.warn(f"Failed to find waveform output file: {self.waveform_file}", stacklevel=2)
 
-        if err_msg is not None:
-            raise RuntimeError(f"Test failed: {err_msg}")
+        if err is not None:
+            raise err
 
     def build_and_run(self):
         """
         Build and run the simulation in sequence.
         """
+        __tracebackhide__ = True  # Hide the traceback when using PyTest.
         self.build()
         self.run()
 
