@@ -408,6 +408,7 @@ class Ghdl(Simulator):
         """
         super()._pre_run()
         self.test_args.append('--std=08')
+        self.has_waves = False
 
 class Nvc(Simulator):
     """
@@ -432,3 +433,10 @@ class Nvc(Simulator):
 
         # TODO: Allowed memory, may need to be tweaked
         self.build_args.append('-M 256m')
+
+    def _pre_run(self):
+        """
+        Prepare GHDL-specific test arguments
+        """
+        super()._pre_run()
+        self.has_waves = False
