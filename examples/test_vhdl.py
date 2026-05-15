@@ -9,6 +9,7 @@ test = generate_tests(
     extension = 'vhd',
     backends = [None, 'celosia'],
     simulators = ['nvc', 'ghdl'],
+    timescale = ('1ns', '1fs'), # For GHDL+celosia
 )
 
 if __name__ == '__main__':
