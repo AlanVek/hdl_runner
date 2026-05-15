@@ -23,10 +23,8 @@ class Adder(Elaboratable):
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 from cocotb.clock import Clock
-from hdl_runner import run
 import os
 from random import getrandbits
-import pytest
 
 async def init_test(dut):
     cocotb.start_soon(Clock(dut.clk, 10, 'ns').start())
@@ -60,17 +58,37 @@ async def adder_test(dut):
 
         last = a + b
 
-@pytest.mark.parametrize('width', [1, 2, 4, 8])
-@pytest.mark.parametrize('backend', ['celosia'])
-def test(width, backend):
-    adder = Adder(width, domain = 'sync')
-    run(
-        adder,
-        ports = [adder.a, adder.b, adder.o],
-        waveform_file = 'adder_ghdl_amaranth.vcd',
-        simulator='ghdl',
-        backend = backend,
-    )
+import pytest
+from pathlib import Path
+from hdl_runner import run
 
-if __name__ == '__main__':
-    test(8, 'celosia')
+EXAMPLES_DIR = Path(__file__).parent
+
+def generate_tests(language, extension, backends, simulators):
+    @pytest.mark.parametrize('width', [1, 2, 4, 8])
+    @pytest.mark.parametrize('backend', backends)
+    @pytest.mark.parametrize('simulator', simulators)
+    def test(width, backend, simulator):
+        if backend is None:
+            m = None
+            toplevel = 'Adder'
+            sources = list(EXAMPLES_DIR.glob(f'*.{extension}'))
+            parameters = {'size': width}
+            ports = None
+        else:
+            m = Adder(width)
+            toplevel = sources = parameters = None
+            ports = [m.a, m.b, m.o]
+
+        run(
+            m,
+            ports = ports,
+            waveform_file = f'adder_{width}_{simulator}{f"_{backend}" or ""}_{language}.fst',
+            toplevel = toplevel,
+            **{f'{language}_sources': sources},
+            parameters = parameters,
+            simulator = simulator,
+            backend = backend,
+        )
+
+    return test
