@@ -214,7 +214,7 @@ def run(
     parameters: dict = None,
     platform = None,
     vcd_file: str = None, # For backwards compatibility
-    timescale: tuple = ('1ns', '1ps'),
+    timescale: tuple = ('1ns', '1fs'),
     lang: str = None,
     caller_file: str = None,
     extra_args: list = None,
