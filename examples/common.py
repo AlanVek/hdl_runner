@@ -64,7 +64,7 @@ from hdl_runner import run
 
 EXAMPLES_DIR = Path(__file__).parent
 
-def generate_tests(language, extension, backends, simulators):
+def generate_tests(language, extension, backends, simulators, **kwargs):
     @pytest.mark.parametrize('width', [1, 2, 4, 8])
     @pytest.mark.parametrize('backend', backends)
     @pytest.mark.parametrize('simulator', simulators)
@@ -89,6 +89,7 @@ def generate_tests(language, extension, backends, simulators):
             parameters = parameters,
             simulator = simulator,
             backend = backend,
+            **kwargs,
         )
 
     return test
